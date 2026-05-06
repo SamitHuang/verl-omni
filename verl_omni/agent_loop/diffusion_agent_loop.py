@@ -153,18 +153,23 @@ class DiffusionAgentLoopWorker:
 
         sampling_params = {
             **_config_to_sampling_dict(config.pipeline),
-            **_config_to_sampling_dict(config.algo),
+            **config.algo.to_rollout_dict(),
             "logprobs": config.calculate_log_probs,
         }
 
-        # override sampling params for validation
-        if batch.meta_info.get("validate", False):
+        is_validate = batch.meta_info.get("validate", False)
+
+        if is_validate:
             sampling_params.update(_config_to_sampling_dict(config.val_kwargs.pipeline))
-            sampling_params.update(_config_to_sampling_dict(config.val_kwargs.algo))
+            sampling_params.update(config.val_kwargs.algo.to_rollout_dict())
             sampling_params["seed"] = config.val_kwargs.seed
             sampling_params["logprobs"] = False
+        else:
+            # Per-step algo overrides from the trainer (e.g. MixGRPO window).
+            algo_overrides = batch.meta_info.get("algo_overrides")
+            if algo_overrides:
+                sampling_params.update(algo_overrides)
 
-        # by default, we assume it's a single turn agent
         if "agent_name" not in batch.non_tensor_batch:
             default_agent_loop = config.agent.default_agent_loop
             batch.non_tensor_batch["agent_name"] = np.array([default_agent_loop] * len(batch), dtype=object)

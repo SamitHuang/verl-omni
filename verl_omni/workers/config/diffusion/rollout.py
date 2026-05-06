@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Optional
 
 from omegaconf import MISSING
@@ -26,6 +27,8 @@ from verl.workers.config.rollout import (
 )
 
 __all__ = [
+    "AlgoType",
+    "SampleStrategy",
     "DiffusionRolloutAlgoConfig",
     "DiffusionPipelineConfig",
     "DiffusionSamplingConfig",
@@ -33,13 +36,75 @@ __all__ = [
 ]
 
 
+class AlgoType(str, Enum):
+    """Supported diffusion RL algorithm types."""
+
+    FLOW_GRPO = "flow_grpo"
+    MIX_GRPO = "mix_grpo"
+
+
+class SampleStrategy(str, Enum):
+    """MixGRPO sliding-window sampling strategies."""
+
+    RANDOM = "random"
+    PROGRESSIVE = "progressive"
+
+
 @dataclass
 class DiffusionRolloutAlgoConfig(BaseConfig):
-    # for SDE-based diffusion process
+    """Algorithm configuration for the SDE-based diffusion rollout.
+
+    Toggle :attr:`algo_type` to switch algorithms; MixGRPO-only knobs
+    (``sample_strategy``, ``iters_per_group``, ``seed``) are ignored when
+    ``algo_type == flow_grpo``.
+    """
+
+    # Fields consumed only by the trainer-side scheduler, NOT forwarded to
+    # the rollout backend.  Centralised here so the agent loop doesn't need
+    # to maintain a separate deny-list.
+    _TRAINER_ONLY_FIELDS = frozenset({"algo_type", "sample_strategy", "iters_per_group", "seed"})
+    _mutable_fields = {"algo_type", "sample_strategy"}
+
+    algo_type: str = "flow_grpo"
     noise_level: float = 1.0
     sde_type: str = "sde"
     sde_window_size: Optional[int] = None
-    sde_window_range: list[int] = field(default_factory=lambda: [0, 5])
+    sde_window_range: Optional[list[int]] = None
+
+    # MixGRPO-only knobs
+    sample_strategy: str = "random"
+    iters_per_group: int = 1
+    seed: int = 0
+
+    def __post_init__(self):
+        self.algo_type = self._coerce_enum(AlgoType, self.algo_type)
+        self.sample_strategy = self._coerce_enum(SampleStrategy, self.sample_strategy)
+        if self.algo_type == AlgoType.MIX_GRPO and self.sde_window_size is None:
+            raise ValueError(
+                "MixGRPO requires `actor_rollout_ref.rollout.algo.sde_window_size` to be set."
+            )
+        if self.sample_strategy == SampleStrategy.PROGRESSIVE and self.iters_per_group <= 0:
+            raise ValueError("`iters_per_group` must be positive for the progressive strategy.")
+
+    @staticmethod
+    def _coerce_enum(enum_cls, value):
+        """Convert a value to an enum member, handling OmegaConf's str() serialisation."""
+        if isinstance(value, enum_cls):
+            return value
+        s = str(value)
+        try:
+            return enum_cls(s)
+        except ValueError:
+            pass
+        # OmegaConf serialises enums via str(), producing e.g. "AlgoType.MIX_GRPO".
+        name = s.rsplit(".", 1)[-1]
+        if name in enum_cls.__members__:
+            return enum_cls[name]
+        raise ValueError(f"{s!r} is not a valid {enum_cls.__name__}")
+
+    def to_rollout_dict(self) -> dict:
+        """Return only the fields that should be forwarded to the rollout backend."""
+        return {k: v for k, v in self.items() if k not in self._TRAINER_ONLY_FIELDS and not k.startswith("_")}
 
 
 @dataclass
