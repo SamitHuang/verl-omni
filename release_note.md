@@ -26,9 +26,8 @@
     - [ ] 8 or 16 nodes
 
 - CI & UX
-    - [ ] prepare dockers, image can put to Quay
-        - [ ] GPU
-    - [ ] standard convergence test  @Andy
+    - [ ] prepare docker images (GPU & NPU, Quay)
+    - [ ] standard fast convergence test (Z-image)  @Andy
 
 - Upstream version rebase
     - vLLM-Omni 0.22
