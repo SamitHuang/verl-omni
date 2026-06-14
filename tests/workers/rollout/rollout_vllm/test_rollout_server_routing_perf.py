@@ -62,7 +62,6 @@ _flowgrpo_spec.loader.exec_module(_flowgrpo_helpers)
 DEFAULT_MODEL_PATH = _flowgrpo_helpers.DEFAULT_MODEL_PATH
 DEFAULT_OCR_PARQUET = _flowgrpo_helpers.DEFAULT_OCR_PARQUET
 REQUEST_BATCH_MAX_WAIT_MS = _flowgrpo_helpers.REQUEST_BATCH_MAX_WAIT_MS
-REQUEST_BATCH_MIN_SIZE = _flowgrpo_helpers.REQUEST_BATCH_MIN_SIZE
 flowgrpo_training_sampling_params = _flowgrpo_helpers.flowgrpo_training_sampling_params
 load_flowgrpo_ocr_samples = _flowgrpo_helpers.load_flowgrpo_ocr_samples
 parse_batch_verify_log = _flowgrpo_helpers.parse_batch_verify_log
@@ -105,7 +104,6 @@ def _build_rollout_cfg() -> Any:
                 "vllm_omni": {
                     "step_execution": False,
                     "request_batch_max_wait_ms": REQUEST_BATCH_MAX_WAIT_MS,
-                    "request_batch_min_size": REQUEST_BATCH_MIN_SIZE,
                 }
             },
             "pipeline": {

@@ -93,13 +93,30 @@ class vLLMOmniHttpServer(vLLMHttpServer):
     def _get_cli_description(self) -> str:
         return "vLLM-Omni CLI"
 
+    def _preprocess_engine_kwargs(self, engine_kwargs: dict) -> None:
+        """Apply diffusion rollout defaults for request-mode batching (vllm-omni PR #4079)."""
+        super()._preprocess_engine_kwargs(engine_kwargs)
+        # step_execution must stay false so compatible concurrent requests use execute_batch.
+        engine_kwargs.setdefault("step_execution", False)
+        engine_kwargs.setdefault("request_batch_max_wait_ms", 250.0)
+
     # -----------------------------------------------------------------------
     # Server lifecycle
     # -----------------------------------------------------------------------
 
+    _DIFFUSION_ADMISSION_KWARGS = (
+        "step_execution",
+        "request_batch_max_wait_ms",
+    )
+
     async def run_server(self, args: argparse.Namespace):
         engine_args = OmniEngineArgs.from_cli_args(args)
         engine_args = asdict(engine_args)
+        # OmniEngineArgs.from_cli_args can drop OrchestratorArgs-surface flags;
+        # recover explicit CLI values from the parsed namespace.
+        for key in self._DIFFUSION_ADMISSION_KWARGS:
+            if hasattr(args, key):
+                engine_args[key] = getattr(args, key)
 
         # inject multi-stage yaml config
         deploy_config = getattr(args, "deploy_config", None)
@@ -193,12 +210,12 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         if video_data is not None:
             multi_modal_data["video"] = video_data
 
-        # Add lora request
+        # Add lora request (cache list_loras — per-request RPC serializes burst ingress).
         lora_request = None
         if self.lora_as_adapter:
-            # Make sure we also check that the lora is already loaded in the engine
-            lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
-            if lora_loaded:
+            if not hasattr(self, "_cached_lora_loaded"):
+                self._cached_lora_loaded = VLLM_LORA_INT_ID in await self.engine.list_loras()
+            if self._cached_lora_loaded:
                 lora_request = LoRARequest(
                     lora_name=VLLM_LORA_NAME, lora_int_id=VLLM_LORA_INT_ID, lora_path=VLLM_LORA_PATH
                 )

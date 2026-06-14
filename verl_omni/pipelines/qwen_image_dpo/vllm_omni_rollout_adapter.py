@@ -21,9 +21,10 @@ from vllm_omni.diffusion.data import DiffusionOutput, OmniDiffusionConfig
 from vllm_omni.diffusion.distributed.utils import get_local_device
 from vllm_omni.diffusion.models.qwen_image import QwenImagePipeline
 from vllm_omni.diffusion.request import OmniDiffusionRequest
+from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
-from verl_omni.pipelines.qwen_image_flow_grpo.common import apply_true_cfg, build_img_shapes
+from verl_omni.pipelines.qwen_image_flow_grpo.common import apply_true_cfg, build_img_shapes, extract_custom_prompt
 
 __all__ = ["QwenImageDPOPipeline"]
 
@@ -101,7 +102,58 @@ class QwenImageDPOPipeline(QwenImagePipeline):
 
     def forward(
         self,
-        req: OmniDiffusionRequest,
+        req: DiffusionRequestBatch,
+        prompt_ids: torch.Tensor | list[int] | None = None,
+        prompt_mask: torch.Tensor | None = None,
+        negative_prompt_ids: torch.Tensor | list[int] | None = None,
+        negative_prompt_mask: torch.Tensor | None = None,
+        true_cfg_scale: float = 4.0,
+        height: int | None = None,
+        width: int | None = None,
+        num_inference_steps: int = 50,
+        sigmas: list[float] | None = None,
+        guidance_scale: float = 1.0,
+        num_images_per_prompt: int = 1,
+        generator: torch.Generator | list[torch.Generator] | None = None,
+        latents: torch.Tensor | None = None,
+        prompt_embeds: torch.Tensor | None = None,
+        prompt_embeds_mask: torch.Tensor | None = None,
+        negative_prompt_embeds: torch.Tensor | None = None,
+        negative_prompt_embeds_mask: torch.Tensor | None = None,
+        output_type: str | None = "pil",
+        attention_kwargs: dict[str, Any] | None = None,
+        max_sequence_length: int = 512,
+    ) -> list[DiffusionOutput]:
+        return [
+            self._forward_single(
+                omni_req,
+                prompt_ids=prompt_ids,
+                prompt_mask=prompt_mask,
+                negative_prompt_ids=negative_prompt_ids,
+                negative_prompt_mask=negative_prompt_mask,
+                true_cfg_scale=true_cfg_scale,
+                height=height,
+                width=width,
+                num_inference_steps=num_inference_steps,
+                sigmas=sigmas,
+                guidance_scale=guidance_scale,
+                num_images_per_prompt=num_images_per_prompt,
+                generator=generator,
+                latents=latents,
+                prompt_embeds=prompt_embeds,
+                prompt_embeds_mask=prompt_embeds_mask,
+                negative_prompt_embeds=negative_prompt_embeds,
+                negative_prompt_embeds_mask=negative_prompt_embeds_mask,
+                output_type=output_type,
+                attention_kwargs=attention_kwargs,
+                max_sequence_length=max_sequence_length,
+            )
+            for omni_req in req.requests
+        ]
+
+    def _forward_single(
+        self,
+        omni_req: OmniDiffusionRequest,
         prompt_ids: torch.Tensor | list[int] | None = None,
         prompt_mask: torch.Tensor | None = None,
         negative_prompt_ids: torch.Tensor | list[int] | None = None,
@@ -124,14 +176,14 @@ class QwenImageDPOPipeline(QwenImagePipeline):
         max_sequence_length: int = 512,
     ) -> DiffusionOutput:
         del output_type
-        custom_prompt = req.prompts[0] if req.prompts else {}
+        custom_prompt = extract_custom_prompt(omni_req)
         if isinstance(custom_prompt, dict):
             prompt_ids = custom_prompt.get("prompt_token_ids", prompt_ids)
             prompt_mask = custom_prompt.get("prompt_mask", prompt_mask)
             negative_prompt_ids = custom_prompt.get("negative_prompt_ids", negative_prompt_ids)
             negative_prompt_mask = custom_prompt.get("negative_prompt_mask", negative_prompt_mask)
 
-        sampling_params = req.sampling_params
+        sampling_params = omni_req.sampling_params
         height = sampling_params.height or self.default_sample_size * self.vae_scale_factor
         width = sampling_params.width or self.default_sample_size * self.vae_scale_factor
         num_inference_steps = sampling_params.num_inference_steps or num_inference_steps

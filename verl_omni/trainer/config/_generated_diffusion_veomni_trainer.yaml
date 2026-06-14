@@ -247,7 +247,9 @@ actor_rollout_ref:
       _target_: verl.workers.config.MultiTurnConfig
       enable: false
     engine_kwargs:
-      vllm_omni: {}
+      vllm_omni:
+        step_execution: false
+        request_batch_max_wait_ms: 250.0
     val_kwargs:
       _target_: verl_omni.workers.config.diffusion.DiffusionSamplingConfig
       'n': 1

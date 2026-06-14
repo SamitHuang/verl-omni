@@ -121,7 +121,13 @@ multi_turn:
 engine_kwargs:
 
   # vllm-omni engine config
-  vllm_omni: {}
+  vllm_omni:
+    # Request-mode batching (vllm-omni PR #4079 + admission). step_execution must be
+    # false so concurrent rollouts route through execute_batch. Admission window caps
+    # how long the engine waits for a burst before the first fused forward; vllm-omni
+    # default is 0 (disabled). FlowGRPO 150-step e2e used 250ms.
+    step_execution: false
+    request_batch_max_wait_ms: 250.0
 
 # Sampling parameters used during validation (diffusion-specific).
 val_kwargs:

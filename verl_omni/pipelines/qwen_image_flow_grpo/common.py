@@ -13,8 +13,15 @@
 # limitations under the License.
 
 import torch
+from vllm_omni.diffusion.request import OmniDiffusionRequest
 
 QWEN_IMAGE_VAE_SCALE_FACTOR = 8
+
+
+def extract_custom_prompt(omni_req: OmniDiffusionRequest) -> dict:
+    """Return the custom prompt dict from a single diffusion request."""
+    prompt = omni_req.prompt
+    return prompt if isinstance(prompt, dict) else {}
 
 
 def coalesce_not_none(value, default):
@@ -27,6 +34,63 @@ def build_img_shapes(
     latent_height = height // vae_scale_factor // 2
     latent_width = width // vae_scale_factor // 2
     return [[(1, latent_height, latent_width)]] * batch_size
+
+
+def pad_prompt_embeds_to_len(prompt_embeds: torch.Tensor, target_seq_len: int) -> torch.Tensor:
+    """Pad or truncate prompt embeddings to a shared batch sequence length."""
+    if prompt_embeds.ndim == 2:
+        prompt_embeds = prompt_embeds.unsqueeze(0)
+    _, seq_len, _ = prompt_embeds.shape
+    if seq_len == target_seq_len:
+        return prompt_embeds
+    if seq_len > target_seq_len:
+        return prompt_embeds[:, :target_seq_len]
+    out = prompt_embeds.new_zeros((prompt_embeds.shape[0], target_seq_len, prompt_embeds.shape[2]))
+    out[:, :seq_len] = prompt_embeds
+    return out
+
+
+def pad_prompt_mask_to_len(prompt_mask: torch.Tensor, target_seq_len: int) -> torch.Tensor:
+    """Pad or truncate prompt masks to a shared batch sequence length."""
+    if prompt_mask.ndim == 1:
+        prompt_mask = prompt_mask.unsqueeze(0)
+    _, seq_len = prompt_mask.shape
+    if seq_len == target_seq_len:
+        return prompt_mask
+    if seq_len > target_seq_len:
+        return prompt_mask[:, :target_seq_len]
+    out = torch.zeros(
+        (prompt_mask.shape[0], target_seq_len),
+        dtype=prompt_mask.dtype,
+        device=prompt_mask.device,
+    )
+    out[:, :seq_len] = prompt_mask
+    return out
+
+
+def gather_padded_prompt_batch(
+    embeds_list: list[torch.Tensor],
+    masks_list: list[torch.Tensor],
+    *,
+    max_sequence_length: int,
+) -> tuple[torch.Tensor, torch.Tensor, int]:
+    """Pad variable-length per-request embeds to one length and concatenate."""
+    target_seq_len = min(max(embeds.shape[1] for embeds in embeds_list), max_sequence_length)
+    prompt_embeds = torch.cat(
+        [pad_prompt_embeds_to_len(embeds, target_seq_len) for embeds in embeds_list],
+        dim=0,
+    )
+    prompt_embeds_mask = torch.cat(
+        [pad_prompt_mask_to_len(mask, target_seq_len) for mask in masks_list],
+        dim=0,
+    )
+    return prompt_embeds, prompt_embeds_mask, target_seq_len
+
+
+def rope_txt_seq_lens(prompt_embeds: torch.Tensor) -> list[int]:
+    """Return per-row RoPE text lengths from padded embed width (diffusers semantics)."""
+    seq_len = int(prompt_embeds.shape[1])
+    return [seq_len] * int(prompt_embeds.shape[0])
 
 
 def apply_true_cfg(
