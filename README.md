@@ -54,17 +54,25 @@ Visit our [documentation](https://verl-omni.readthedocs.io/en/latest/index.html)
 - [Installation](https://verl-omni.readthedocs.io/en/latest/start/install.html)
 - [Quickstart](https://verl-omni.readthedocs.io/en/latest/start/flowgrpo_quickstart.html)
 
-### Example: Qwen-Image FlowGRPO
-
-Same prompt, before vs. after FlowGRPO training:
-
-<div align="center">
-  <img src="docs/assets/qwen_image_flowgrpo_before.png" alt="Qwen-Image before FlowGRPO" width="45%">
-  &nbsp;
-  <img src="docs/assets/qwen_image_flowgrpo_after.png" alt="Qwen-Image after FlowGRPO" width="45%">
-  <br>
-  <em>Left: before &nbsp;|&nbsp; Right: after</em>
-</div>
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/cb242db0-4233-4a1b-8274-5b3d87d69a36" alt="Training step 0" width="250"/>
+    </td>
+    <td align="center">
+      <img src="https://github.com/user-attachments/assets/af82391b-081d-46a3-9878-9113b89452cd" alt="Training step 120" width="250"/>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">Training step 0</td>
+    <td align="center">Training step 120</td>
+  </tr>
+</table>
+<p align="center"><b>Example: Optimizing Qwen-Image Text Rendering Accuracy with FlowGRPO</b>
+  (<a href="examples/flowdppo_trainer/README.md" target="_blank">recipe</a>
+  &nbsp;|&nbsp;
+  <a href="https://wandb.ai/andyzhou/VeRL-Omni-demo/runs/8p8y9olb" target="_blank">wandb</a>)
+</p>
 
 ## Model and Algorithm Support 🎨
 
@@ -125,24 +133,6 @@ Same prompt, before vs. after FlowGRPO training:
     <td>✅</td>
   </tr>
   <tr>
-    <td rowspan="2">HunyuanImage-3.0</td>
-    <td rowspan="2">Unified understand + gen</td>
-    <td rowspan="2">Text + Image</td>
-    <td>MixGRPO</td>
-    <td>Planned</td>
-  </tr>
-  <tr>
-    <td>SRPO</td>
-    <td>Planned</td>
-  </tr>
-  <tr>
-    <td>Qwen3-Omni-Thinker</td>
-    <td>Omni-modality</td>
-    <td>Text / Image / Video / Audio</td>
-    <td>GSPO</td>
-    <td>✅</td>
-  </tr>
-  <tr>
     <td rowspan="3">SD3.5</td>
     <td rowspan="3">Diffusion generator</td>
     <td rowspan="3">Text → Image</td>
@@ -156,6 +146,39 @@ Same prompt, before vs. after FlowGRPO training:
   <tr>
     <td>FlowGRPO w/ DiNa-LRM</td>
     <td>✅</td>
+  </tr>
+  <tr>
+    <td rowspan="2">HunyuanImage-3.0</td>
+    <td rowspan="2">Unified understand + gen</td>
+    <td rowspan="2">Text + Image</td>
+    <td>MixGRPO</td>
+    <td>Planned</td>
+  </tr>
+  <tr>
+    <td>SRPO</td>
+    <td>Planned</td>
+  </tr>
+  <tr>
+    <td rowspan="2">Qwen3-Omni-Thinker</td>
+    <td rowspan="2">Omni-modality</td>
+    <td rowspan="2">Text / Image / Video / Audio</td>
+    <td>DPO</td>
+    <td>WIP</td>
+  </tr>
+    <tr>
+    <td>GSPO</td>
+    <td>✅</td>
+  </tr>
+    <tr>
+    <td rowspan="2">Qwen3-TTS</td>
+    <td rowspan="2">Audio-modality</td>
+    <td rowspan="2">Text -> Audio</td>
+    <td>DPO</td>
+    <td>WIP</td>
+  </tr>
+    <tr>
+    <td>GSPO</td>
+    <td>WIP</td>
   </tr>
 </table>
 
