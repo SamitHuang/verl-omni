@@ -175,6 +175,7 @@ Contributions are welcome.
 
 See the [contribution guide](CONTRIBUTING.md).
 
+**Join the Community**: Feel free to ask questions, provide feedback, and discuss with fellow users of VeRL-Omni in our [WeChat group](docs/assets/WeChat.jpg).
 
 
 ## Acknowledgement 🌟
