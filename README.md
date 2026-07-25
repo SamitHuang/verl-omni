@@ -35,11 +35,11 @@ Multimodal generative RL training differs from text-only LLM RL not only in mode
 
 ### What we focus on
 
-- **Fast multi-modal rollout:**  Adopt [`vLLM-Omni`](https://github.com/vllm-project/vllm-omni) backend and accelerate generation via rollout routing, rollout  batching, embed caching optimzations, and more.
+- **Fast multi-modal rollout:** Adopt [`vLLM-Omni`](https://github.com/vllm-project/vllm-omni) backend and accelerate generation via rollout routing, rollout  batching, embed caching optimizations, and more.
 - **Flexible & async multi-reward serving:** Support multi-reward serving (HPSv3, GenRM-OCR, UnifiedReward, etc.), [HTTP scorer](https://verl-omni.readthedocs.io/en/latest/start/http_scorer.html), and [asynchronous reward computation](https://verl-omni.readthedocs.io/en/latest/algo/async_reward.html) to overlap the rollout phase.
 - **Modular training backends:** Selectable [VeOmni](https://github.com/ByteDance-Seed/VeOmni) and FSDP2 backends with combinable parallelism (USP/TP/DP) for distributed training.
-- **Stability:** Boost stability and speed in diffusion RL pipelines via [rollout correction](https://verl-omni.readthedocs.io/en/latest/algo/rollout_correction.html) to skip logP recomputation, and achieve reproducible E2E training with deterministic RL. Reward, rollout and actor update are composable and extendable, via Hydra configs.
-- **Highly-efficient and convergable training recipes:** On our reference Qwen-Image FlowGRPO setup, `VeRL-Omni` achieves **~25% higher end-to-end throughput** than the diffusers-based [`flow_grpo`](https://github.com/yifan123/flow_grpo) implementation, driven by `vLLM-Omni` rollout, FSDP2 trainer, overlapped reward computation (asynchronous), etc.
+- **Stability:** Boost stability and speed in diffusion RL pipelines via [rollout correction](https://verl-omni.readthedocs.io/en/latest/algo/rollout_correction.html) to skip logP recomputation, and achieve reproducible E2E training with deterministic RL. Reward, rollout and actor update are composable and extensible, via Hydra configs.
+- **Efficient and convergent training recipes:** On our reference Qwen-Image FlowGRPO setup, `VeRL-Omni` achieves **~25% higher end-to-end throughput** than the diffusers-based [`flow_grpo`](https://github.com/yifan123/flow_grpo) implementation, driven by `vLLM-Omni` rollout, FSDP2 trainer, overlapped reward computation (asynchronous), etc.
 
 
 <div align="center">
@@ -172,7 +172,7 @@ Visit our [documentation](https://verl-omni.readthedocs.io/en/latest/index.html)
     <tr>
     <td rowspan="2">Qwen3-TTS</td>
     <td rowspan="2">Audio-modality</td>
-    <td rowspan="2">Text -> Audio</td>
+    <td rowspan="2">Text → Audio</td>
     <td>DPO</td>
     <td>WIP</td>
   </tr>
