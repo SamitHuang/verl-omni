@@ -49,8 +49,8 @@ algorithm:
   trainer_type: policy_gradient
   sample_source: online
   adv_estimator: ${oc.select:actor_rollout_ref.model.algorithm,flow_grpo}
-  norm_adv_by_std_in_grpo: True
-  global_std: True
+  norm_adv_by_std_in_grpo: true
+  global_std: true
   old_policy_decay_schedule: copy
   old_policy_decay: null
   old_policy_update_interval: 1
