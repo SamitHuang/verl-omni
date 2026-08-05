@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import torch
 
 __all__ = [
@@ -198,7 +199,7 @@ def _slice_batch_value(value: Any, start: int, stop: int, expected_batch_size: i
     # Slice only when leading size matches the packed batch; leave shared T/L axes alone.
     if value is None:
         return None
-    if isinstance(value, torch.Tensor):
+    if isinstance(value, torch.Tensor | np.ndarray):
         return value[start:stop] if value.ndim > 0 and value.shape[0] == expected_batch_size else value
     if isinstance(value, tuple):
         return tuple(_slice_batch_value(item, start, stop, expected_batch_size) for item in value)
@@ -245,6 +246,9 @@ def split_diffusion_output_by_request(
                 finished=result.finished,
                 chunk_index=result.chunk_index,
                 total_chunks=result.total_chunks,
+                started_event_ids=result.started_event_ids,
+                active_event_ids=result.active_event_ids,
+                completed_event_ids=result.completed_event_ids,
                 stage_durations=dict(result.stage_durations),
                 peak_memory_mb=result.peak_memory_mb,
                 to_cpu=result.to_cpu,

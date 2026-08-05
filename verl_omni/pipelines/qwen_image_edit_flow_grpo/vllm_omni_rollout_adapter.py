@@ -27,6 +27,7 @@ from vllm_omni.diffusion.models.qwen_image.pipeline_qwen_image_edit_plus import 
 )
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 
+from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.qwen_image_flow_grpo.common import (
     QwenImageTokenIdPromptMixin,
@@ -409,7 +410,7 @@ class QwenImageEditPlusPipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImag
         elif prompt_embeds is not None:
             batch_size = prompt_embeds.shape[0]
         else:
-            return DiffusionOutput(output=None, custom_output={})
+            return RolloutDiffusionOutput(output=None, custom_output={})
 
         if isinstance(negative_prompt_ids, list):
             negative_prompt_ids = torch.tensor(negative_prompt_ids, device=self.device)
@@ -531,7 +532,7 @@ class QwenImageEditPlusPipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImag
             latents = latents / latents_std + latents_mean
             image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
 
-        return DiffusionOutput(
+        return RolloutDiffusionOutput(
             output=_maybe_to_cpu(image),
             custom_output={
                 "all_latents": _maybe_to_cpu(all_latents),

@@ -5,7 +5,7 @@ ARG ASCEND_PIP_INDEX_URL="https://mirrors.huaweicloud.com/ascend/repos/pypi"
 ARG PYTORCH_CPU_INDEX_URL="https://download.pytorch.org/whl/cpu/"
 
 ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
-ARG VLLM_REF="v0.24.0"
+ARG VLLM_REF="v0.26.0"
 
 ARG VLLM_ASCEND_REPO="https://github.com/vllm-project/vllm-ascend.git"
 ARG VLLM_ASCEND_REF=""

@@ -49,7 +49,7 @@ dependencies = [
 [project.optional-dependencies]
 # Rollout engine (install in step 2, after gpu step 1).
 vllm-omni = [
-    "vllm-omni==0.24.0",
+    "vllm-omni==0.26.0",
     "qwen-vl-utils>=0.0.14",
 ]
 audio = [
@@ -57,7 +57,7 @@ audio = [
 ]
 # CUDA rollout backend (vllm) + actor FA3 (kernels) + liger-kernel. Install in step 1 on GPU.
 gpu = [
-    "vllm==0.24.0",
+    "vllm==0.26.0",
     "kernels==0.14.1",
     "liger-kernel",
 ]

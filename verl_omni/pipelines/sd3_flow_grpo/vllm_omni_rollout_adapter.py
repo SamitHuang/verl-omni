@@ -28,6 +28,7 @@ from vllm_omni.diffusion.models.sd3.pipeline_sd3 import StableDiffusion3Pipeline
 from vllm_omni.diffusion.request import DUMMY_DIFFUSION_REQUEST_ID, OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 
+from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.request_batch import (
     sample_per_sample_sde_windows as _sample_per_sample_sde_windows,
@@ -373,7 +374,7 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
                     "(see examples/flowgrpo_trainer/sd35/run_sd35_medium_ocr_lora.sh)."
                 )
             # Engine warm-up / dummy run without a usable prompt.
-            outputs = [DiffusionOutput(output=None, custom_output={}) for _ in range(request_batch.num_reqs)]
+            outputs = [RolloutDiffusionOutput(output=None, custom_output={}) for _ in range(request_batch.num_reqs)]
             return outputs if return_batch else outputs[0]
         if isinstance(prompt, str):
             prompt = [prompt]
@@ -486,7 +487,7 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
 
         if request_batch.requests[0].request_id == DUMMY_DIFFUSION_REQUEST_ID and sde_window[0][0] == sde_window[0][1]:
             output = self._decode_latents(latents, output_type)
-            result = DiffusionOutput(output=output, custom_output={}, to_cpu=True)
+            result = RolloutDiffusionOutput(output=output, custom_output={}, to_cpu=True)
             outputs = _split_diffusion_output_by_request(
                 result,
                 request_batch,
@@ -526,7 +527,7 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
         if output_type == "both":
             custom_output["latents_clean"] = latents.float()
 
-        result = DiffusionOutput(
+        result = RolloutDiffusionOutput(
             output=output,
             custom_output=custom_output,
             to_cpu=True,

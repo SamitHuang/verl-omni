@@ -14,7 +14,6 @@
 
 import copy
 import os
-from dataclasses import replace
 from typing import Any, Literal
 
 import torch
@@ -24,8 +23,9 @@ from vllm_omni.diffusion.models.qwen_image import QwenImagePipeline
 from vllm_omni.diffusion.models.qwen_image.rope_utils import txt_seq_lens_from_embeds
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
-from vllm_omni.diffusion.worker.utils import DiffusionRequestState
+from vllm_omni.diffusion.worker.utils import StepRequestState
 
+from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput, rollout_output_from
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.request_batch import (
     collate_prompt_mask as _collate_prompt_mask,
@@ -198,9 +198,9 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
 
     def prepare_encode(
         self,
-        state: "DiffusionRequestState",
+        state: "StepRequestState",
         **kwargs: Any,
-    ) -> "DiffusionRequestState":
+    ) -> "StepRequestState":
         """Populate *state* with encoded prompts, latents, timesteps, and CFG config.
 
         Override of ``QwenImagePipeline.prepare_encode`` that accepts pre-tokenized
@@ -208,7 +208,7 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
         matching the input contract of ``QwenImagePipelineWithLogProb``.
         """
         sampling = state.sampling
-        # vllm-omni >=0.24 stores a single prompt on DiffusionRequestState.prompt
+        # vllm-omni >=0.24 stores a single prompt on StepRequestState.prompt
         # (not .prompts). Match upstream QwenImagePipeline.prepare_encode.
         prompt_ids, prompt_mask, negative_prompt_ids, negative_prompt_mask = self._extract_prompt_ids(
             [state.prompt] if state.prompt is not None else []
@@ -496,7 +496,7 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
 
     def step_scheduler(
         self,
-        state: DiffusionRequestState,
+        state: StepRequestState,
         noise_pred: torch.Tensor,
         **kwargs: Any,
     ) -> None:
@@ -593,7 +593,7 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
 
     def post_decode(
         self,
-        state: DiffusionRequestState,
+        state: StepRequestState,
         **kwargs: Any,
     ) -> DiffusionOutput:
         """Decode final latents, package rollout trajectory, and move to CPU.
@@ -625,7 +625,7 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
             torch.stack(all_timesteps).unsqueeze(0).expand(state.latents.shape[0], -1) if all_timesteps else None
         )
 
-        return replace(
+        return rollout_output_from(
             output,
             custom_output={
                 "all_latents": stacked_latents,
@@ -807,7 +807,7 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
         else:
             # Both prompt_token_ids and prompt_embeds are None (e.g. during warmup/dummy run).
             # Return a minimal dummy output to avoid crashing.
-            outputs = [DiffusionOutput(output=None, custom_output={}) for _ in range(request_batch.num_reqs)]
+            outputs = [RolloutDiffusionOutput(output=None, custom_output={}) for _ in range(request_batch.num_reqs)]
             return outputs if return_batch else outputs[0]
 
         has_neg_prompt = negative_prompt_ids is not None or (
@@ -909,7 +909,7 @@ class QwenImagePipelineWithLogProb(QwenImageTokenIdPromptMixin, QwenImagePipelin
             latents = latents / latents_std + latents_mean
             image = self.vae.decode(latents, return_dict=False)[0][:, :, 0]
 
-        result = DiffusionOutput(
+        result = RolloutDiffusionOutput(
             output=image,
             custom_output={
                 "all_latents": all_latents,

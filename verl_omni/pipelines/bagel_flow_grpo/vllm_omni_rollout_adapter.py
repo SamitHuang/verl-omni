@@ -37,6 +37,7 @@ from verl_omni.pipelines.bagel_flow_grpo.common import (
     maybe_to_cpu,
     setup_bagel_sigmas,
 )
+from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.schedulers import FlowMatchSDEDiscreteScheduler
 
@@ -351,7 +352,7 @@ class BagelPipelineWithLogProb(BagelPipeline):
             if traj_timesteps is not None:
                 traj_timesteps = traj_timesteps[begin:end]
 
-        return DiffusionOutput(
+        return RolloutDiffusionOutput(
             output=maybe_to_cpu(output.output),
             custom_output={
                 "all_latents": maybe_to_cpu(traj_latents.unsqueeze(0)) if traj_latents is not None else None,

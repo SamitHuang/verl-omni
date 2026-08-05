@@ -244,6 +244,26 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 engine_args["enable_dummy_pipeline"] = True
                 engine_args["custom_pipeline_args"] = {"pipeline_class": pipeline_path}
 
+                # vllm-omni 0.26 hard-fails engine startup when max_num_seqs>1 on a
+                # pipeline without request-level batching (0.24 ran serially instead).
+                # Restore the serial behavior for single-request pipelines.
+                pipeline_cls = VllmOmniPipelineBase.get_class(
+                    architecture=self.model_config.architecture,
+                    algorithm=self.model_config.algorithm,
+                )
+                step_execution = getattr(self.config, "step_execution", False)
+                if (
+                    pipeline_cls is not None
+                    and not getattr(pipeline_cls, "supports_request_batch", False)
+                    and not step_execution
+                    and int(engine_args.get("max_num_seqs") or 1) > 1
+                ):
+                    logger.info(
+                        "Pipeline %s does not support request-level batching; clamping max_num_seqs to 1.",
+                        pipeline_cls.__name__,
+                    )
+                    engine_args["max_num_seqs"] = 1
+
         if getattr(self.config, "step_execution", False):
             engine_args["step_execution"] = True
 

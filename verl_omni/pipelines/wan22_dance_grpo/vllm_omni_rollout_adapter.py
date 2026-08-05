@@ -35,6 +35,7 @@ from vllm_omni.diffusion.models.wan2_2.pipeline_wan2_2 import Wan22Pipeline, ret
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 from vllm_omni.platforms import current_omni_platform
 
+from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.schedulers import FlowMatchSDEDiscreteScheduler
 
@@ -382,7 +383,7 @@ class Wan22DanceGRPOPipelineWithLogProb(Wan22Pipeline):
 
                 # --- Handle warmup / dummy run (both prompt_ids and prompt_embeds are None) ---
                 if custom_prompt.get("prompt", None) == "dummy run":
-                    return DiffusionOutput(output=None, custom_output={})
+                    return RolloutDiffusionOutput(output=None, custom_output={})
 
         # Default dimensions
         sampling_params = req.sampling_params
@@ -651,7 +652,7 @@ class Wan22DanceGRPOPipelineWithLogProb(Wan22Pipeline):
             latents = latents / latents_std + latents_mean
             output = self.vae.decode(latents, return_dict=False)[0]
 
-        return DiffusionOutput(
+        return RolloutDiffusionOutput(
             output=output,
             custom_output={
                 "all_latents": all_latents,

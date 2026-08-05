@@ -183,8 +183,14 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
 
                 process_weights_after_loading(model, model_config, self.device)
             else:
-                # Diffusion pipeline worker: use its own loader.
-                receiver.receive_weights(on_bucket_received=lambda weights: self.load_weights(weights))
+                # Diffusion pipeline worker: load via the pipeline. vllm-omni
+                # 0.26 removed DiffusionWorker/DiffusionModelRunner.load_weights;
+                # each pipeline exposes load_weights via AutoWeightsLoader.
+                pipeline = getattr(getattr(self, "model_runner", None), "pipeline", None)
+                assert pipeline is not None and hasattr(pipeline, "load_weights"), (
+                    "Diffusion pipeline worker has no load_weights-capable pipeline"
+                )
+                receiver.receive_weights(on_bucket_received=lambda weights: pipeline.load_weights(weights))
 
     def _get_zmq_handle(self) -> str:
         """Get ZMQ handle for communication.
