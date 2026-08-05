@@ -24,6 +24,10 @@ that carrier end-to-end:
 - An import-time patch on ``DiffusionEngine.postprocess_output`` forwards the
   field to ``OmniRequestOutput.custom_output`` on the engine side, preserving
   the consumption path in ``vllm_omni_async_server``.
+- An import-time patch on the diffusion IPC field walkers sends large tensors
+  in ``custom_output`` through shared memory. Without this, 0.26's async output
+  path pickles SD3.5 rollout trajectories inline and hits its 30-second output
+  deadline.
 
 The engine patch relies on vLLM's default ``fork`` multiprocessing start
 method on Linux: ``verl_omni.pipelines`` is imported in the rollout server
@@ -88,6 +92,37 @@ def rollout_output_from(output: DiffusionOutput, **changes: Any) -> RolloutDiffu
 
 
 _ENGINE_PATCHED = False
+_IPC_PATCHED = False
+
+
+def _patch_diffusion_ipc_custom_output() -> None:
+    """Include rollout extras in vllm-omni's shared-memory field walkers."""
+    global _IPC_PATCHED
+    if _IPC_PATCHED:
+        return
+    _IPC_PATCHED = True
+
+    from vllm_omni.diffusion import ipc
+
+    original_pack_fields = ipc._pack_diffusion_fields
+    original_unpack_fields = ipc._unpack_diffusion_fields
+
+    def pack_fields_with_custom(output, d2h_stream=None):
+        output = original_pack_fields(output, d2h_stream=d2h_stream)
+        custom = getattr(output, "custom_output", None)
+        if custom:
+            output.custom_output = ipc._pack_value_if_large(custom, d2h_stream=d2h_stream)
+        return output
+
+    def unpack_fields_with_custom(output):
+        output = original_unpack_fields(output)
+        custom = getattr(output, "custom_output", None)
+        if custom:
+            output.custom_output = ipc._unpack_if_shm_handle(custom)
+        return output
+
+    ipc._pack_diffusion_fields = pack_fields_with_custom
+    ipc._unpack_diffusion_fields = unpack_fields_with_custom
 
 
 def _patch_diffusion_engine_custom_output() -> None:
@@ -117,4 +152,5 @@ def _patch_diffusion_engine_custom_output() -> None:
     DiffusionEngine.postprocess_output = postprocess_output_with_custom
 
 
+_patch_diffusion_ipc_custom_output()
 _patch_diffusion_engine_custom_output()
