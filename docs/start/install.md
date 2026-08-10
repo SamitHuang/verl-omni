@@ -45,6 +45,10 @@ uv pip install vllm==0.26.0
 uv pip install "vllm-ascend @ git+https://github.com/vllm-project/vllm-ascend.git@$(cat .github/vllm_ascend_pin.txt)"
 ```
 
+The vLLM-Ascend pin tracks a tested commit from the
+[`releases/v0.26.0rc`](https://github.com/vllm-project/vllm-ascend/tree/releases/v0.26.0rc)
+release-candidate branch targeting vLLM 0.26.0.
+
 3. Install vLLM-Omni and VeRL-Omni
 
 ```bash
