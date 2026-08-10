@@ -28,7 +28,7 @@ from vllm_omni.diffusion.models.sd3.pipeline_sd3 import StableDiffusion3Pipeline
 from vllm_omni.diffusion.request import DUMMY_DIFFUSION_REQUEST_ID, OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 
-from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput
+from verl_omni.pipelines.diffusion_rollout_output import rollout_output
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.request_batch import (
     sample_per_sample_sde_windows as _sample_per_sample_sde_windows,
@@ -43,6 +43,7 @@ from verl_omni.pipelines.sd3_flow_grpo.common import (
     SD3_T5_TOKENS_KEY,
     SD3TokenIdPromptMixin,
 )
+from verl_omni.pipelines.vllm_omni_output_compat import envelope_aware_postprocessor
 
 __all__ = ["StableDiffusion3PipelineWithLogProb"]
 
@@ -147,7 +148,7 @@ _SD3_IMAGE_POST_PROCESS_FUNC = pipeline_sd3.get_sd3_image_post_process_func
 
 
 def get_latent_post_process_func(od_config):
-    """Keep SD3 latents untouched while normally postprocessing decoded images."""
+    """Postprocess SD3 media while preserving rollout metadata."""
     image_postprocess = _SD3_IMAGE_POST_PROCESS_FUNC(od_config)
 
     def postprocess(output):
@@ -155,7 +156,7 @@ def get_latent_post_process_func(od_config):
             return output
         return image_postprocess(output)
 
-    return postprocess
+    return envelope_aware_postprocessor(postprocess)
 
 
 # vLLM-Omni resolves this module-level factory before initializing the custom
@@ -178,7 +179,7 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
       for engine warm-up / serving-style requests;
     - ``forward`` collects ``all_latents`` / ``all_log_probs`` /
       ``all_timesteps`` and ships prompt embeddings (sequence + pooled)
-      through ``custom_output`` for training-side log-prob recomputation;
+      through ``trajectory_*`` / metadata for training-side log-prob recomputation;
     - CFG is plain SD3 guidance (``guidance_scale``); the convergence-test
       default is non-CFG (``guidance_scale <= 1`` skips the negative branch
       entirely, halving the transformer NFE).
@@ -374,7 +375,7 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
                     "(see examples/flowgrpo_trainer/sd35/run_sd35_medium_ocr_lora.sh)."
                 )
             # Engine warm-up / dummy run without a usable prompt.
-            outputs = [RolloutDiffusionOutput(output=None, custom_output={}) for _ in range(request_batch.num_reqs)]
+            outputs = [DiffusionOutput(output=None) for _ in range(request_batch.num_reqs)]
             return outputs if return_batch else outputs[0]
         if isinstance(prompt, str):
             prompt = [prompt]
@@ -487,7 +488,7 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
 
         if request_batch.requests[0].request_id == DUMMY_DIFFUSION_REQUEST_ID and sde_window[0][0] == sde_window[0][1]:
             output = self._decode_latents(latents, output_type)
-            result = RolloutDiffusionOutput(output=output, custom_output={}, to_cpu=True)
+            result = DiffusionOutput(output=output, to_cpu=True)
             outputs = _split_diffusion_output_by_request(
                 result,
                 request_batch,
@@ -513,23 +514,24 @@ class StableDiffusion3PipelineWithLogProb(SD3TokenIdPromptMixin, StableDiffusion
 
         self._current_timestep = None
         output = self._decode_latents(latents, output_type)
-        custom_output = {
-            "all_latents": all_latents,
-            "all_log_probs": all_log_probs,
-            "all_timesteps": all_timesteps,
-            "prompt_embeds": prompt_embeds,
-            "prompt_embeds_mask": prompt_embeds_mask,
-            "pooled_prompt_embeds": pooled_prompt_embeds,
-            "negative_prompt_embeds": negative_prompt_embeds,
-            "negative_prompt_embeds_mask": negative_prompt_embeds_mask,
-            "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
-        }
+        rl = {}
         if output_type == "both":
-            custom_output["latents_clean"] = latents.float()
+            rl["latents_clean"] = latents.float()
 
-        result = RolloutDiffusionOutput(
-            output=output,
-            custom_output=custom_output,
+        result = rollout_output(
+            media=output,
+            trajectory_latents=all_latents,
+            trajectory_log_probs=all_log_probs,
+            trajectory_timesteps=all_timesteps,
+            prompt_embeddings={
+                "prompt_embeds": prompt_embeds,
+                "prompt_embeds_mask": prompt_embeds_mask,
+                "pooled_prompt_embeds": pooled_prompt_embeds,
+                "negative_prompt_embeds": negative_prompt_embeds,
+                "negative_prompt_embeds_mask": negative_prompt_embeds_mask,
+                "negative_pooled_prompt_embeds": negative_pooled_prompt_embeds,
+            },
+            rl=rl,
             to_cpu=True,
         )
         outputs = _split_diffusion_output_by_request(

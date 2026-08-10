@@ -201,6 +201,8 @@ def _slice_batch_value(value: Any, start: int, stop: int, expected_batch_size: i
         return None
     if isinstance(value, torch.Tensor | np.ndarray):
         return value[start:stop] if value.ndim > 0 and value.shape[0] == expected_batch_size else value
+    if isinstance(value, dict):
+        return {key: _slice_batch_value(item, start, stop, expected_batch_size) for key, item in value.items()}
     if isinstance(value, tuple):
         return tuple(_slice_batch_value(item, start, stop, expected_batch_size) for item in value)
     if isinstance(value, list):
@@ -218,10 +220,9 @@ def split_diffusion_output_by_request(
 
     Tensors whose leading dimension equals ``req.num_reqs * num_outputs_per_prompt``
     are sliced along the batch axis; shared schedule / sequence axes are left
-    intact.
+    intact. Nested payload/metadata envelopes are sliced recursively.
     """
     outputs: list[Any] = []
-    custom_output = result.custom_output or {}
     expected_batch_size = req.num_reqs * num_outputs_per_prompt
     for idx in range(req.num_reqs):
         start = idx * num_outputs_per_prompt
@@ -239,10 +240,6 @@ def split_diffusion_output_by_request(
                 aborted=result.aborted,
                 abort_message=result.abort_message,
                 post_process_func=result.post_process_func,
-                custom_output={
-                    key: _slice_batch_value(value, start, stop, expected_batch_size)
-                    for key, value in custom_output.items()
-                },
                 finished=result.finished,
                 chunk_index=result.chunk_index,
                 total_chunks=result.total_chunks,

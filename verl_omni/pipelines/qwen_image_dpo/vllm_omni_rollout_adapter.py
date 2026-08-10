@@ -24,7 +24,7 @@ from vllm_omni.diffusion.models.qwen_image import QwenImagePipeline
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 from vllm_omni.diffusion.worker.utils import StepRequestState
 
-from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput, rollout_output_from
+from verl_omni.pipelines.diffusion_rollout_output import rollout_output, with_rollout_data
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.qwen_image_flow_grpo.common import apply_true_cfg, build_img_shapes
 
@@ -235,15 +235,15 @@ class QwenImageDPOPipeline(QwenImagePipeline):
         del kwargs
         self._current_timestep = None
         output = self._decode_latents(state.latents, state.extra["height"], state.extra["width"], "pil")
-        return rollout_output_from(
+        return with_rollout_data(
             output,
-            custom_output={
-                "latents_clean": state.latents.float(),
+            prompt_embeddings={
                 "prompt_embeds": state.prompt_embeds,
                 "prompt_embeds_mask": state.prompt_embeds_mask,
                 "negative_prompt_embeds": state.negative_prompt_embeds,
                 "negative_prompt_embeds_mask": state.negative_prompt_embeds_mask,
             },
+            rl={"latents_clean": state.latents.float()},
             to_cpu=True,
         )
 
@@ -364,7 +364,7 @@ class QwenImageDPOPipeline(QwenImagePipeline):
         elif prompt_embeds is not None:
             batch_size = prompt_embeds.shape[0]
         else:
-            return RolloutDiffusionOutput(output=None, custom_output={})
+            return DiffusionOutput(output=None)
 
         if isinstance(negative_prompt_ids, list):
             negative_prompt_ids = torch.tensor(negative_prompt_ids, device=self.device)
@@ -473,14 +473,14 @@ class QwenImageDPOPipeline(QwenImagePipeline):
         unpacked_latents = unpacked_latents / latents_std + latents_mean
         image = self.vae.decode(unpacked_latents, return_dict=False)[0][:, :, 0]
 
-        return RolloutDiffusionOutput(
-            output=image,
-            custom_output={
-                "latents_clean": latents_clean,
+        return rollout_output(
+            media=image,
+            prompt_embeddings={
                 "prompt_embeds": prompt_embeds,
                 "prompt_embeds_mask": prompt_embeds_mask,
                 "negative_prompt_embeds": negative_prompt_embeds,
                 "negative_prompt_embeds_mask": negative_prompt_embeds_mask,
             },
+            rl={"latents_clean": latents_clean},
             to_cpu=True,
         )

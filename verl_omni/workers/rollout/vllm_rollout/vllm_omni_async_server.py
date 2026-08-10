@@ -18,6 +18,7 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import asdict
 from typing import Any, Optional
 
@@ -63,6 +64,20 @@ _LORA_REQUEST_CACHE_MISS = object()
 
 def _strip_none(d: dict) -> dict:
     return {k: _strip_none(v) if isinstance(v, dict) else v for k, v in d.items() if v is not None}
+
+
+def _rollout_metadata_groups(multimodal_output: Any) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(multimodal_output, Mapping):
+        return ()
+    metadata = multimodal_output.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return ()
+    groups = []
+    for name in ("prompt_embeddings", "rl"):
+        group = metadata.get(name)
+        if isinstance(group, Mapping):
+            groups.append(group)
+    return tuple(groups)
 
 
 class vLLMOmniHttpServer(vLLMHttpServer):
@@ -627,15 +642,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         else:
             diffusion_output = self._to_tensor(diffusion_output).float() / 255.0
 
-        # Extract extra data from custom_output (populated by DiffusionEngine)
-        custom_output = final_res.custom_output or {}
-
-        if sampling_params.get("logprobs", False):
-            all_log_probs = custom_output.get("all_log_probs")
-            log_probs = all_log_probs[0] if all_log_probs is not None else None
-        else:
-            log_probs = None
-
+        # Native vllm-omni 0.26 contract: trajectory_* + multimodal metadata.
         def _maybe_unbatch(value: Any) -> Any:
             if value is None:
                 return None
@@ -647,12 +654,21 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 return value[0] if value else None
             return value
 
-        extra_fields = {k: _maybe_unbatch(v) for k, v in custom_output.items() if k != "all_log_probs"}
-        multimodal_output = final_res.multimodal_output or {}
-        if isinstance(multimodal_output, dict):
-            for key, value in multimodal_output.items():
-                extra_fields.setdefault(key, _maybe_unbatch(value))
-        extra_fields["global_steps"] = self.global_steps
+        if sampling_params.get("logprobs", False):
+            log_probs = _maybe_unbatch(final_res.trajectory_log_probs)
+        else:
+            log_probs = None
+
+        extra_fields: dict[str, Any] = {"global_steps": self.global_steps}
+        if final_res.trajectory_latents is not None:
+            extra_fields["all_latents"] = _maybe_unbatch(final_res.trajectory_latents)
+        if final_res.trajectory_timesteps is not None:
+            extra_fields["all_timesteps"] = _maybe_unbatch(final_res.trajectory_timesteps)
+        for metadata_group in _rollout_metadata_groups(final_res.multimodal_output):
+            for key, value in metadata_group.items():
+                if key in extra_fields:
+                    raise ValueError(f"Duplicate rollout metadata field: {key}")
+                extra_fields[key] = _maybe_unbatch(value)
 
         if final_res.request_output is not None and hasattr(final_res.request_output, "finish_reason"):
             finish_reason = final_res.request_output.finish_reason or "stop"

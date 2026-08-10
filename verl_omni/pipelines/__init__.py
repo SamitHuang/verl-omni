@@ -14,7 +14,6 @@
 
 from . import (
     bagel_flow_grpo,
-    diffusion_rollout_output,  # noqa: F401  # import-time vllm-omni 0.26 custom_output patch
     ltx2_flow_grpo,
     qwen3_omni,
     qwen_image_diffusion_nft,

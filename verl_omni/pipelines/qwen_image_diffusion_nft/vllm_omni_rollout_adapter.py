@@ -23,7 +23,7 @@ from vllm_omni.diffusion.request import OmniDiffusionRequest
 from vllm_omni.diffusion.utils.size_utils import normalize_min_aligned_size
 from vllm_omni.diffusion.worker.utils import StepRequestState
 
-from verl_omni.pipelines.diffusion_rollout_output import RolloutDiffusionOutput, rollout_output_from
+from verl_omni.pipelines.diffusion_rollout_output import rollout_output, with_rollout_data
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.qwen_image_flow_grpo.common import (
     QwenImageTokenIdPromptMixin,
@@ -162,15 +162,17 @@ class QwenImageDiffusionNFTPipeline(QwenImageTokenIdPromptMixin, QwenImagePipeli
         output = self._decode_latents(state.latents, height, width, kwargs.get("output_type") or "pil")
 
         latents_clean = state.latents.float()
-        return rollout_output_from(
+        return with_rollout_data(
             output,
-            custom_output={
-                "latents_clean": latents_clean,
-                "train_timesteps": state.timesteps.unsqueeze(0).expand(latents_clean.shape[0], -1),
+            prompt_embeddings={
                 "prompt_embeds": state.prompt_embeds,
                 "prompt_embeds_mask": state.prompt_embeds_mask,
                 "negative_prompt_embeds": state.negative_prompt_embeds,
                 "negative_prompt_embeds_mask": state.negative_prompt_embeds_mask,
+            },
+            rl={
+                "latents_clean": latents_clean,
+                "train_timesteps": state.timesteps.unsqueeze(0).expand(latents_clean.shape[0], -1),
             },
             to_cpu=True,
         )
@@ -337,7 +339,7 @@ class QwenImageDiffusionNFTPipeline(QwenImageTokenIdPromptMixin, QwenImagePipeli
             num_images_per_prompt = req_num_outputs
 
         if prompt_ids is None and prompt_embeds is None:
-            return RolloutDiffusionOutput(output=None, custom_output={})
+            return DiffusionOutput(output=None)
 
         ctx = self._prepare_token_id_generation_context(
             prompt_ids=prompt_ids,
@@ -386,15 +388,17 @@ class QwenImageDiffusionNFTPipeline(QwenImageTokenIdPromptMixin, QwenImagePipeli
         latents_clean = latents.float()
         decoded = self._decode_latents(latents, height, width, output_type or "pil")
 
-        return RolloutDiffusionOutput(
-            output=decoded.output,
-            custom_output={
-                "latents_clean": latents_clean,
-                "train_timesteps": ctx["timesteps"].unsqueeze(0).expand(latents_clean.shape[0], -1),
+        return rollout_output(
+            media=decoded.output,
+            prompt_embeddings={
                 "prompt_embeds": ctx["prompt_embeds"],
                 "prompt_embeds_mask": ctx["prompt_embeds_mask"],
                 "negative_prompt_embeds": ctx["negative_prompt_embeds"],
                 "negative_prompt_embeds_mask": ctx["negative_prompt_embeds_mask"],
+            },
+            rl={
+                "latents_clean": latents_clean,
+                "train_timesteps": ctx["timesteps"].unsqueeze(0).expand(latents_clean.shape[0], -1),
             },
             to_cpu=True,
         )
