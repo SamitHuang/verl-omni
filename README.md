@@ -126,8 +126,7 @@ Visit our [documentation](https://verl-omni.readthedocs.io/en/latest/index.html)
     <td>FlowGRPO</td>
     <td>✅</td>
   </tr>
-  </tr>
-    <tr>
+  <tr>
     <td>MiniMax H3</td>
     <td>Diffusion generator</td>
     <td>Any → Video + Audio</td>
