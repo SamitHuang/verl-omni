@@ -584,9 +584,9 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             if final_res is None:
                 raise RuntimeError("AR mode: vLLM-Omni engine yielded no output for the prompt.")
 
-            req_output = final_res.request_output
-            if req_output is None:
-                raise RuntimeError("AR mode expects request_output with token IDs, but got None.")
+            req_output = getattr(final_res, "request_output", None) or final_res
+            if not req_output.outputs:
+                raise RuntimeError("AR mode expects outputs with token IDs, but got None or empty.")
 
             extra_fields = {"global_steps": self.global_steps}
             token_ids = req_output.outputs[0].token_ids
@@ -602,6 +602,8 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             num_preempted = None
             if hasattr(req_output.outputs[0], "num_preempted"):
                 num_preempted = req_output.outputs[0].num_preempted
+            elif hasattr(req_output, "num_preempted"):
+                num_preempted = req_output.num_preempted
 
             return TokenOutput(
                 token_ids=token_ids,
@@ -619,8 +621,12 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         # can retry the whole sample.
         if final_res is None or not final_res.images:
             finish_reason = "abort"
-            if final_res is not None and final_res.request_output is not None:
-                finish_reason = getattr(final_res.request_output, "finish_reason", None) or "abort"
+            if final_res is not None:
+                req_out = getattr(final_res, "request_output", None) or final_res
+                if hasattr(req_out, "outputs") and req_out.outputs:
+                    finish_reason = getattr(req_out.outputs[0], "finish_reason", None) or "abort"
+                else:
+                    finish_reason = getattr(req_out, "finish_reason", None) or "abort"
             stop_reason = self._map_stop_reason(finish_reason)
             logger.debug(
                 "diffusion rollout produced no image (finish_reason=%s); returning %s", finish_reason, stop_reason
@@ -635,6 +641,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
         assert final_res is not None
         diffusion_output = final_res.images[0]
+        if isinstance(diffusion_output, dict):
+            for key in ("video", "image", "output", "audio"):
+                if key in diffusion_output and diffusion_output[key] is not None:
+                    diffusion_output = diffusion_output[key]
+                    break
         if isinstance(diffusion_output, torch.Tensor):
             diffusion_output = diffusion_output.float()
         elif isinstance(diffusion_output, np.ndarray):
@@ -670,16 +681,21 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                     raise ValueError(f"Duplicate rollout metadata field: {key}")
                 extra_fields[key] = _maybe_unbatch(value)
 
-        if final_res.request_output is not None and hasattr(final_res.request_output, "finish_reason"):
-            finish_reason = final_res.request_output.finish_reason or "stop"
+        req_output = getattr(final_res, "request_output", None) or final_res
+        if hasattr(req_output, "outputs") and req_output.outputs:
+            finish_reason = req_output.outputs[0].finish_reason or "stop"
+        elif hasattr(req_output, "finish_reason"):
+            finish_reason = req_output.finish_reason or "stop"
         else:
             finish_reason = "stop"
 
         stop_reason = self._map_stop_reason(finish_reason)
 
         num_preempted = None
-        if final_res.request_output is not None and hasattr(final_res.request_output, "num_preempted"):
-            num_preempted = final_res.request_output.num_preempted
+        if hasattr(req_output, "outputs") and req_output.outputs and hasattr(req_output.outputs[0], "num_preempted"):
+            num_preempted = req_output.outputs[0].num_preempted
+        elif hasattr(req_output, "num_preempted"):
+            num_preempted = req_output.num_preempted
 
         return DiffusionOutput(
             diffusion_output=diffusion_output,
@@ -790,11 +806,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
         ``_process_orchestrator_results`` reads from ``req_state.queue`` and
         expects ``OutputMessage`` (or ``ErrorMessage``) objects. We build a
-        minimal ``OmniRequestOutput`` carrying a ``RequestOutput`` with
-        ``finish_reason="abort"`` so that ``_process_single_result`` yields it
-        and ``_process_output`` maps it to ``stop_reason="aborted"``.
+        minimal ``OmniRequestOutput`` with ``finish_reason="abort"`` so that
+        ``_process_single_result`` yields it and ``_process_output`` maps it
+        to ``stop_reason="aborted"``.
         """
-        from vllm.outputs import CompletionOutput, RequestOutput
+        from vllm.outputs import CompletionOutput
         from vllm_omni.engine.messages import OutputMessage
         from vllm_omni.outputs import OmniRequestOutput
 
@@ -807,18 +823,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             finish_reason="abort",
             stop_reason=None,
         )
-        request_output = RequestOutput(
-            request_id=internal_id,
-            prompt=None,
-            prompt_token_ids=[],
-            prompt_logprobs=None,
-            outputs=[completion],
-            finished=True,
-        )
         omni_output = OmniRequestOutput(
             request_id=internal_id,
+            outputs=[completion],
             finished=True,
-            request_output=request_output,
         )
         # Use the final stage so _process_single_result's stage_meta.final_output
         # check passes and the output is yielded (not silently dropped).

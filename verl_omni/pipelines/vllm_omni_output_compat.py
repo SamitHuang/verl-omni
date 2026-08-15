@@ -42,6 +42,8 @@ def envelope_aware_postprocessor(postprocess: Callable[..., Any]) -> Callable[..
                 "payload": dict(processed["payload"]),
                 "metadata": {**dict(processed.get("metadata") or {}), **metadata},
             }
+        if isinstance(processed, Mapping):
+            return {"payload": dict(processed), "metadata": metadata}
         return {"payload": {media_key: processed}, "metadata": metadata}
 
     return wrapped
