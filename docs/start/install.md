@@ -100,7 +100,7 @@ VeOmni itself runs correctly on torch 2.11 — only the `[gpu]` extra's pin is t
 
 ```bash
 uv pip install veomni==0.1.11 --no-deps
-uv pip install torchcodec librosa soundfile av
+uv pip install torchcodec librosa soundfile av audioread
 ```
 
 Verify the engine is importable:
