@@ -130,18 +130,22 @@ jobs:
     runs-on: ["${{ needs.setup_runner.outputs.runner-label || needs.setup_runner.outputs.runner-size || 'L20x8' }}"]
     timeout-minutes: ${{ needs.setup_runner.outputs.group-count == '1' && 45 || 90 }}
     env:
+      # Match verl gpu_unit_tests.yml: uppercase-only proxy keys. GitHub Actions
+      # treats env names as case-insensitive, so http_proxy duplicates HTTP_PROXY.
       HTTP_PROXY: "http://100.68.174.87:3128"
       HTTPS_PROXY: "http://100.68.174.87:3128"
-      http_proxy: "http://100.68.174.87:3128"
-      https_proxy: "http://100.68.174.87:3128"
       NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
-      no_proxy: "localhost,127.0.0.1,hf-mirror.com"
       HF_ENDPOINT: "https://hf-mirror.com"
       HF_HUB_ENABLE_HF_TRANSFER: "0"
+      UV_LINK_MODE: copy
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+      - name: Keep the uv cache on the runner's persistent HOME
+        run: |
+          echo "HOME=${HOME} (uv cache baked into the image: ${UV_CACHE_DIR})"
+          echo "UV_CACHE_DIR=${HOME}/.cache/uv" | tee -a "${GITHUB_ENV}"
       - uses: ./.github/actions/gpu-smoke-prepare
       - name: Run selected GPU smoke tests
         env:

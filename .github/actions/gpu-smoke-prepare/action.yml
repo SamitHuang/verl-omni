@@ -9,18 +9,15 @@ runs:
       env:
         HTTP_PROXY: "http://100.68.174.87:3128"
         HTTPS_PROXY: "http://100.68.174.87:3128"
-        http_proxy: "http://100.68.174.87:3128"
-        https_proxy: "http://100.68.174.87:3128"
         NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
-        no_proxy: "localhost,127.0.0.1,hf-mirror.com"
         UV_EXTRA_INDEX_URL: https://pypi.org/simple
         PIP_EXTRA_INDEX_URL: https://pypi.org/simple
         UV_SYSTEM_PYTHON: "1"
         UV_BREAK_SYSTEM_PACKAGES: "1"
         PIP_BREAK_SYSTEM_PACKAGES: "1"
-        UV_CACHE_DIR: /root/.cache/uv
         UV_LINK_MODE: copy
       run: |
+        export UV_CACHE_DIR="${UV_CACHE_DIR:-${HOME}/.cache/uv}"
         git config --global http.postBuffer 524288000 || true
         # Base image PyPI mirror may lag pypi.org (e.g. kernels, fa3-fwd).
         uv pip install --system --break-system-packages ".[gpu,dev]"
