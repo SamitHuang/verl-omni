@@ -132,7 +132,10 @@ jobs:
     env:
       HTTP_PROXY: "http://100.68.174.87:3128"
       HTTPS_PROXY: "http://100.68.174.87:3128"
-      NO_PROXY: "localhost,127.0.0.1,hf-mirror.com,github.com,api.github.com,codeload.github.com,.github.com,.actions.githubusercontent.com,.blob.core.windows.net"
+      http_proxy: "http://100.68.174.87:3128"
+      https_proxy: "http://100.68.174.87:3128"
+      NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
+      no_proxy: "localhost,127.0.0.1,hf-mirror.com"
       HF_ENDPOINT: "https://hf-mirror.com"
       HF_HUB_ENABLE_HF_TRANSFER: "0"
     steps:
