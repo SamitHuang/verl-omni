@@ -98,16 +98,16 @@ jobs:
               "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
               --paginate \
               --jq '.[].filename' > changed_files.txt
-            plan_json="$(python tests/gpu_smoke/select_gpu_smoke_groups.py --changed-files-file changed_files.txt)"
+            plan_json="$(python3 tests/gpu_smoke/select_gpu_smoke_groups.py --changed-files-file changed_files.txt)"
           elif [[ "${mode}" == "all" ]]; then
-            plan_json="$(python tests/gpu_smoke/select_gpu_smoke_groups.py --all)"
+            plan_json="$(python3 tests/gpu_smoke/select_gpu_smoke_groups.py --all)"
           else
-            plan_json="$(python tests/gpu_smoke/select_gpu_smoke_groups.py --groups "${mode}")"
+            plan_json="$(python3 tests/gpu_smoke/select_gpu_smoke_groups.py --groups "${mode}")"
           fi
 
           echo "Resolved GPU smoke plan: ${plan_json}"
           echo "groups-json=${plan_json}" >> "$GITHUB_OUTPUT"
-          PLAN_JSON="${plan_json}" python - <<'PY' >> "$GITHUB_OUTPUT"
+          PLAN_JSON="${plan_json}" python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import os
 
@@ -156,7 +156,7 @@ jobs:
           set -euo pipefail
           mkdir -p logs/gpu_smoke/parallel
 
-          python - <<'PY' > /tmp/gpu_smoke_groups.tsv
+          python3 - <<'PY' > /tmp/gpu_smoke_groups.tsv
           import json
           import os
 
