@@ -7,20 +7,24 @@ runs:
     - name: Install dependencies
       shell: bash
       env:
+        UV_EXTRA_INDEX_URL: https://pypi.org/simple
         PIP_EXTRA_INDEX_URL: https://pypi.org/simple
+        UV_SYSTEM_PYTHON: "1"
+        UV_BREAK_SYSTEM_PACKAGES: "1"
+        PIP_BREAK_SYSTEM_PACKAGES: "1"
       run: |
         # Base image PyPI mirror may lag pypi.org (e.g. kernels, fa3-fwd).
-        pip3 install ".[gpu,dev]"
-        pip3 install "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@$(cat .github/vllm_omni_pin.txt)"
-        pip3 install --no-deps --force-reinstall "verl @ git+https://github.com/verl-project/verl.git@$(cat .github/verl_pin.txt)"
-        pip3 install TransferQueue==0.1.8
-        pip3 install --no-deps -e .
+        uv pip install --system --break-system-packages ".[gpu,dev]"
+        uv pip install --system --break-system-packages "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@$(cat .github/vllm_omni_pin.txt)"
+        uv pip install --system --break-system-packages --no-deps --reinstall "verl @ git+https://github.com/verl-project/verl.git@$(cat .github/verl_pin.txt)"
+        uv pip install --system --break-system-packages TransferQueue==0.1.8
+        uv pip install --system --break-system-packages --no-deps -e .
         # veomni's [gpu] extra pins torch 2.9 and would conflict with the vLLM stack.
         # See docs/start/install.md "Optional engine backends".
         # TODO: rm --no-deps when VeOmni support torch2.11
-        pip3 install veomni==0.1.11 --no-deps
-        pip3 install torchcodec librosa soundfile av audioread
-        pip3 install "transformers[mistral-common]"
+        uv pip install --system --break-system-packages veomni==0.1.11 --no-deps
+        uv pip install --system --break-system-packages torchcodec librosa soundfile av audioread
+        uv pip install --system --break-system-packages "transformers[mistral-common]"
         # NCCL checkpoint engine (diffusion v1 separate_async weight sync).
-        pip3 install pyzmq
-        pip3 install cupy-cuda12x || pip3 install cupy-cuda13x
+        uv pip install --system --break-system-packages pyzmq
+        uv pip install --system --break-system-packages cupy-cuda12x || uv pip install --system --break-system-packages cupy-cuda13x
