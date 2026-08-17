@@ -50,6 +50,9 @@ jobs:
       HF_ENDPOINT: "https://hf-mirror.com"
       HF_HUB_ENABLE_HF_TRANSFER: "0"
       UV_LINK_MODE: copy
+      UV_SYSTEM_PYTHON: "1"
+      UV_BREAK_SYSTEM_PACKAGES: "1"
+      PIP_BREAK_SYSTEM_PACKAGES: "1"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -75,6 +78,9 @@ jobs:
           uv pip install --system --break-system-packages "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@$(cat .github/vllm_omni_pin.txt)"
           uv pip install --system --break-system-packages --no-deps --reinstall "verl @ git+https://github.com/verl-project/verl.git@main"
           uv pip install --system --break-system-packages --no-deps -e .
+          if ! command -v python >/dev/null 2>&1; then
+            ln -sfn "$(command -v python3)" /usr/local/bin/python
+          fi
       - name: Run GPU smoke tests (verl latest main)
         # Informational only — failures here are expected when latest verl drifts and must not fail the workflow.
         continue-on-error: true

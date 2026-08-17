@@ -20,7 +20,7 @@ runs:
         export UV_CACHE_DIR="${UV_CACHE_DIR:-${HOME}/.cache/uv}"
         git config --global http.postBuffer 524288000 || true
         # Base image PyPI mirror may lag pypi.org (e.g. kernels, fa3-fwd).
-        uv pip install --system --break-system-packages ".[gpu,dev]"
+        uv pip install --system --break-system-packages ".[gpu,dev,audio]"
         uv pip install --system --break-system-packages "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@$(cat .github/vllm_omni_pin.txt)"
         uv pip install --system --break-system-packages --no-deps --reinstall "verl @ git+https://github.com/verl-project/verl.git@$(cat .github/verl_pin.txt)"
         uv pip install --system --break-system-packages TransferQueue==0.1.8
@@ -34,3 +34,7 @@ runs:
         # NCCL checkpoint engine (diffusion v1 separate_async weight sync).
         uv pip install --system --break-system-packages pyzmq
         uv pip install --system --break-system-packages cupy-cuda12x || uv pip install --system --break-system-packages cupy-cuda13x
+        # uv.cu130 ships python3 only; Ray/scripts may still invoke `python`.
+        if ! command -v python >/dev/null 2>&1; then
+          ln -sfn "$(command -v python3)" /usr/local/bin/python
+        fi

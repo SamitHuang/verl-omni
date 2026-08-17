@@ -143,6 +143,9 @@ jobs:
       HF_ENDPOINT: "https://hf-mirror.com"
       HF_HUB_ENABLE_HF_TRANSFER: "0"
       UV_LINK_MODE: copy
+      UV_SYSTEM_PYTHON: "1"
+      UV_BREAK_SYSTEM_PACKAGES: "1"
+      PIP_BREAK_SYSTEM_PACKAGES: "1"
       NIGHTLY_PIN_KERNELS: "0.14.1"
       NIGHTLY_PIN_FA3_FWD: "0.0.3"
       NIGHTLY_PIN_FLASH_ATTN: "2.8.3"
@@ -182,6 +185,9 @@ jobs:
           uv pip install --system --break-system-packages torchcodec librosa soundfile av audioread
           uv pip install --system --break-system-packages "transformers[mistral-common]==${NIGHTLY_PIN_TRANSFORMERS}"
           python3 -c "import importlib.metadata as m; print('[NIGHTLY] pinned deps:', 'transformers='+m.version('transformers'), 'kernels='+m.version('kernels'), 'fa3-fwd='+m.version('fa3-fwd'), 'flash-attn='+m.version('flash-attn'))"
+          if ! command -v python >/dev/null 2>&1; then
+            ln -sfn "$(command -v python3)" /usr/local/bin/python
+          fi
 
       - name: Download L3 baseline from setup job
         if: env.RUN_MODE == 'nightly'
