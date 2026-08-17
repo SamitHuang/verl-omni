@@ -48,7 +48,8 @@ permissions:
 env:
   IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:uv.cu130"
   DYNAMIC_RUNNER_ENDPOINT: "https://sd7upeujs1b9g1a958pn0.apigateway-cn-beijing.volceapi.com/runner"
-  HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
+  HTTP_PROXY: "http://100.68.174.87:3128"
+  HTTPS_PROXY: "http://100.68.174.87:3128"
   NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
   HF_ENDPOINT: "https://hf-mirror.com"
   HF_HUB_ENABLE_HF_TRANSFER: "0"

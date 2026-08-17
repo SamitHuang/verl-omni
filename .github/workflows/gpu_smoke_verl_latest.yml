@@ -16,6 +16,9 @@ permissions:
 env:
   IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:uv.cu130"
   DYNAMIC_RUNNER_ENDPOINT: "https://sd7upeujs1b9g1a958pn0.apigateway-cn-beijing.volceapi.com/runner"
+  HTTP_PROXY: "http://100.68.174.87:3128"
+  HTTPS_PROXY: "http://100.68.174.87:3128"
+  NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
 
 jobs:
   setup:
@@ -44,10 +47,13 @@ jobs:
     # Informational only — failures here do not block PRs
     continue-on-error: true
     env:
-      HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
+      HTTP_PROXY: "http://100.68.174.87:3128"
+      HTTPS_PROXY: "http://100.68.174.87:3128"
       NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
       HF_ENDPOINT: "https://hf-mirror.com"
       HF_HUB_ENABLE_HF_TRANSFER: "0"
+      UV_CACHE_DIR: /root/.cache/uv
+      UV_LINK_MODE: copy
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
