@@ -15,6 +15,7 @@
 
 Trajectories use ``DiffusionOutput.trajectory_*``. Prompt embeddings and
 algorithm-specific tensors use the canonical payload/metadata envelope.
+Only ``trajectory_*`` and ``rl`` / ``prompt_embeddings`` reach training; ``metadata=`` does not.
 """
 
 from __future__ import annotations
