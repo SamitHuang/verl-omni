@@ -48,11 +48,6 @@ permissions:
 env:
   IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:uv.cu130"
   DYNAMIC_RUNNER_ENDPOINT: "https://sd7upeujs1b9g1a958pn0.apigateway-cn-beijing.volceapi.com/runner"
-  HTTP_PROXY: "http://100.68.174.87:3128"
-  HTTPS_PROXY: "http://100.68.174.87:3128"
-  NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
-  HF_ENDPOINT: "https://hf-mirror.com"
-  HF_HUB_ENABLE_HF_TRANSFER: "0"
 
 jobs:
   setup_runner:
@@ -134,6 +129,12 @@ jobs:
     if: needs.setup_runner.outputs.mode != 'none'
     runs-on: ["${{ needs.setup_runner.outputs.runner-label || needs.setup_runner.outputs.runner-size || 'L20x8' }}"]
     timeout-minutes: ${{ needs.setup_runner.outputs.group-count == '1' && 45 || 90 }}
+    env:
+      HTTP_PROXY: "http://100.68.174.87:3128"
+      HTTPS_PROXY: "http://100.68.174.87:3128"
+      NO_PROXY: "localhost,127.0.0.1,hf-mirror.com,github.com,api.github.com,codeload.github.com,.github.com,.actions.githubusercontent.com,.blob.core.windows.net"
+      HF_ENDPOINT: "https://hf-mirror.com"
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

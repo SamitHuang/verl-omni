@@ -59,9 +59,6 @@ permissions:
 env:
   IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:uv.cu130"
   DYNAMIC_RUNNER_ENDPOINT: "https://sd7upeujs1b9g1a958pn0.apigateway-cn-beijing.volceapi.com/runner"
-  HTTP_PROXY: "http://100.68.174.87:3128"
-  HTTPS_PROXY: "http://100.68.174.87:3128"
-  NO_PROXY: "localhost,127.0.0.1,hf-mirror.com,github.com,api.github.com,codeload.github.com,.github.com,.actions.githubusercontent.com,.blob.core.windows.net"
   BASELINE_ARTIFACT_NAME: l3-nightly-baseline
   BASELINE_STAGING_ARTIFACT_PREFIX: l3-nightly-baseline-staging
   CURRENT_ARTIFACT_PREFIX: l3-nightly-current

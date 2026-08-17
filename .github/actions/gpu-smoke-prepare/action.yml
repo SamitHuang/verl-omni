@@ -9,7 +9,7 @@ runs:
       env:
         HTTP_PROXY: "http://100.68.174.87:3128"
         HTTPS_PROXY: "http://100.68.174.87:3128"
-        NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"
+        NO_PROXY: "localhost,127.0.0.1,hf-mirror.com,github.com,api.github.com,codeload.github.com,.github.com,.actions.githubusercontent.com,.blob.core.windows.net"
         UV_EXTRA_INDEX_URL: https://pypi.org/simple
         PIP_EXTRA_INDEX_URL: https://pypi.org/simple
         UV_SYSTEM_PYTHON: "1"
