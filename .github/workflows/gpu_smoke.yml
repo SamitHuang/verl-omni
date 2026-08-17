@@ -16,7 +16,6 @@ on:
       - .github/workflows/gpu_smoke.yml
       - .github/vllm_omni_pin.txt
       - .github/actions/gpu-smoke-prepare/**
-      - .github/actions/gpu-smoke-upload-logs/**
   pull_request:
     branches:
       - main
@@ -33,7 +32,6 @@ on:
       - .github/workflows/gpu_smoke.yml
       - .github/vllm_omni_pin.txt
       - .github/actions/gpu-smoke-prepare/**
-      - .github/actions/gpu-smoke-upload-logs/**
 
 # Cancel jobs on the same ref if a new one is triggered
 concurrency:
@@ -142,9 +140,36 @@ jobs:
       UV_BREAK_SYSTEM_PACKAGES: "1"
       PIP_BREAK_SYSTEM_PACKAGES: "1"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
+      # Avoid downloading actions/checkout through the shared runner proxy.
+      # Action archives come from codeload.github.com, where the proxy can be
+      # rate-limited before any workflow step or job-level NO_PROXY takes effect.
+      - name: Checkout repository with git
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git init .
+          git remote remove origin 2>/dev/null || true
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+
+          target="${GITHUB_SHA}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            target="refs/pull/${PR_NUMBER}/merge"
+          fi
+
+          fetched=0
+          for attempt in 1 2 3; do
+            if git -c protocol.version=2 fetch --no-tags --depth=1 origin "${target}"; then
+              fetched=1
+              break
+            fi
+            sleep $((attempt * 10))
+          done
+          if [[ "${fetched}" -ne 1 ]]; then
+            echo "Failed to fetch ${target} after 3 attempts." >&2
+            exit 1
+          fi
+          git checkout --force FETCH_HEAD
       - name: Keep the uv cache on the runner's persistent HOME
         run: |
           echo "HOME=${HOME} (uv cache baked into the image: ${UV_CACHE_DIR})"
@@ -214,7 +239,6 @@ jobs:
           echo ""
           if [[ "${failed}" -eq 0 ]]; then
             echo "===== All GPU smoke groups passed; skipping parallel logs ====="
-            echo "Full logs are uploaded as workflow artifacts under logs/gpu_smoke/"
           else
             echo "===== GPU smoke logs (failed groups only) ====="
             for name in "${failed_names[@]}"; do
@@ -227,14 +251,10 @@ jobs:
                 echo "::warning::Missing GPU smoke log: ${logfile}"
               fi
             done
-            echo "Full logs for all groups are uploaded as workflow artifacts under logs/gpu_smoke/"
           fi
 
           ray stop --force || true
           exit "${failed}"
-
-      - if: always()
-        uses: ./.github/actions/gpu-smoke-upload-logs
 
   cleanup:
     runs-on: ubuntu-latest
