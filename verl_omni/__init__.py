@@ -28,6 +28,22 @@ except Exception:
     pass
 
 
+# vLLM 0.27 compatibility: alias FusedMoE in vllm.model_executor.layers.fused_moe.layer for verl
+try:
+    import vllm.model_executor.layers.fused_moe.layer as _fused_moe_layer
+
+    if not hasattr(_fused_moe_layer, "FusedMoE"):
+        import vllm.model_executor.layers.fused_moe as _fused_moe
+
+        _fused_moe_layer.FusedMoE = getattr(
+            _fused_moe,
+            "FusedMoEExpertsModular",
+            getattr(_fused_moe, "FusedMoEMethodBase", object),
+        )
+except Exception:
+    pass
+
+
 # Import pipelines / rollout / reward loop / engines to auto-register them
 # Apply model patches and auto-register pipelines / rollout / reward loop / engines
 import verl_omni.models  # noqa: E402, F401
