@@ -28,7 +28,10 @@ from vllm_omni.diffusion.models.qwen_image.pipeline_qwen_image_edit_plus import 
 )
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 
-from verl_omni.pipelines.diffusion_rollout_output import rollout_output
+from verl_omni.pipelines.diffusion_rollout_output import (
+    rollout_output,
+    wrap_rollout_postprocessor,
+)
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.qwen_image_flow_grpo.common import (
     QwenImageTokenIdPromptMixin,
@@ -37,7 +40,6 @@ from verl_omni.pipelines.qwen_image_flow_grpo.common import (
 )
 from verl_omni.pipelines.schedulers import FlowMatchSDEDiscreteScheduler
 from verl_omni.pipelines.utils import ImageGenerationRequest
-from verl_omni.pipelines.vllm_omni_output_compat import envelope_aware_postprocessor
 
 __all__ = ["QwenImageEditPlusPipelineWithLogProb"]
 
@@ -46,7 +48,7 @@ _QWEN_EDIT_POST_PROCESS_FACTORY = pipeline_qwen_image_edit_plus.get_qwen_image_e
 
 def get_rollout_post_process_func(od_config):
     """Postprocess Qwen-Image-Edit media while preserving rollout metadata."""
-    return envelope_aware_postprocessor(_QWEN_EDIT_POST_PROCESS_FACTORY(od_config))
+    return wrap_rollout_postprocessor(_QWEN_EDIT_POST_PROCESS_FACTORY(od_config))
 
 
 # vllm-omni resolves the built-in architecture's factory in the engine process.

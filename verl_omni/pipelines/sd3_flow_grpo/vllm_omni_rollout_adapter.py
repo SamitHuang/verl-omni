@@ -28,7 +28,10 @@ from vllm_omni.diffusion.models.sd3.pipeline_sd3 import StableDiffusion3Pipeline
 from vllm_omni.diffusion.request import DUMMY_DIFFUSION_REQUEST_ID, OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 
-from verl_omni.pipelines.diffusion_rollout_output import rollout_output
+from verl_omni.pipelines.diffusion_rollout_output import (
+    rollout_output,
+    wrap_rollout_postprocessor,
+)
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.request_batch import (
     sample_per_sample_sde_windows as _sample_per_sample_sde_windows,
@@ -43,7 +46,6 @@ from verl_omni.pipelines.sd3_flow_grpo.common import (
     SD3_T5_TOKENS_KEY,
     SD3TokenIdPromptMixin,
 )
-from verl_omni.pipelines.vllm_omni_output_compat import envelope_aware_postprocessor
 
 __all__ = ["StableDiffusion3PipelineWithLogProb"]
 
@@ -156,7 +158,7 @@ def get_latent_post_process_func(od_config):
             return output
         return image_postprocess(output)
 
-    return envelope_aware_postprocessor(postprocess)
+    return wrap_rollout_postprocessor(postprocess)
 
 
 # vLLM-Omni resolves this module-level factory before initializing the custom

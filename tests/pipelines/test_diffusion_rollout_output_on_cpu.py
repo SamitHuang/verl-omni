@@ -20,9 +20,9 @@ from vllm_omni.diffusion.data import DiffusionOutput
 from verl_omni.pipelines.diffusion_rollout_output import (
     rollout_output,
     with_rollout_data,
+    wrap_rollout_postprocessor,
 )
 from verl_omni.pipelines.request_batch import split_diffusion_output_by_request
-from verl_omni.pipelines.vllm_omni_output_compat import envelope_aware_postprocessor
 
 
 def test_rollout_output_uses_native_trajectory_and_metadata_fields() -> None:
@@ -74,11 +74,11 @@ def test_with_rollout_data_preserves_base_output_fields() -> None:
     assert output.total_chunks == 3
 
 
-def test_envelope_aware_postprocessor_preserves_metadata() -> None:
+def test_wrap_rollout_postprocessor_preserves_metadata() -> None:
     def media_postprocess(media: torch.Tensor) -> torch.Tensor:
         return media + 1
 
-    postprocess = envelope_aware_postprocessor(media_postprocess)
+    postprocess = wrap_rollout_postprocessor(media_postprocess)
     output = postprocess(
         {
             "payload": {"image": torch.zeros(1)},

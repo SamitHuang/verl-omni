@@ -45,10 +45,12 @@ from vllm_omni.diffusion.models.ltx2.pipeline_ltx2 import LTX2Pipeline
 from vllm_omni.diffusion.request import OmniDiffusionRequest
 from vllm_omni.diffusion.worker.request_batch import DiffusionRequestBatch
 
-from verl_omni.pipelines.diffusion_rollout_output import rollout_output
+from verl_omni.pipelines.diffusion_rollout_output import (
+    rollout_output,
+    wrap_rollout_postprocessor,
+)
 from verl_omni.pipelines.model_base import VllmOmniPipelineBase
 from verl_omni.pipelines.schedulers import FlowMatchSDEDiscreteScheduler
-from verl_omni.pipelines.vllm_omni_output_compat import envelope_aware_postprocessor
 
 from .common import calculate_shift, normalize_ltx_output_type
 
@@ -59,7 +61,7 @@ _LTX2_POST_PROCESS_FACTORY = pipeline_ltx2.get_ltx2_post_process_func
 
 def get_rollout_post_process_func(od_config: Any):
     """Postprocess LTX media while preserving rollout metadata."""
-    return envelope_aware_postprocessor(_LTX2_POST_PROCESS_FACTORY(od_config))
+    return wrap_rollout_postprocessor(_LTX2_POST_PROCESS_FACTORY(od_config))
 
 
 # vllm-omni resolves the built-in architecture's factory in the engine process.

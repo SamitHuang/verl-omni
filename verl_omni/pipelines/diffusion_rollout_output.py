@@ -19,7 +19,8 @@ algorithm-specific tensors use the canonical payload/metadata envelope.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import functools
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -79,6 +80,37 @@ def with_rollout_data(
     )
 
 
+def wrap_rollout_postprocessor(postprocess: Callable[..., Any]) -> Callable[..., Any]:
+    """Adapt a media-only upstream postprocessor to preserve rollout payload and metadata."""
+
+    @functools.wraps(postprocess)
+    def wrapped(data: Any, **kwargs: Any) -> Any:
+        if not _is_envelope(data):
+            return postprocess(data, **kwargs)
+
+        payload = data["payload"]
+        metadata = dict(data.get("metadata") or {})
+        media_key = next((key for key in _MEDIA_KEYS if key in payload), None)
+        if media_key is None:
+            raise ValueError("Diffusion output envelope has no media payload.")
+
+        processed = postprocess(payload[media_key], **kwargs)
+        if _is_envelope(processed):
+            return {
+                "payload": dict(processed["payload"]),
+                "metadata": {**dict(processed.get("metadata") or {}), **metadata},
+            }
+        if isinstance(processed, Mapping):
+            return {"payload": dict(processed), "metadata": metadata}
+        return {"payload": {media_key: processed}, "metadata": metadata}
+
+    return wrapped
+
+
+def _is_envelope(value: Any) -> bool:
+    return isinstance(value, Mapping) and isinstance(value.get("payload"), Mapping)
+
+
 def _envelope(
     media: Any,
     media_key: str,
@@ -95,7 +127,7 @@ def _envelope(
 
 
 def _unwrap_output(output: Any, default_key: str) -> tuple[Any, str, dict[str, Any]]:
-    if not (isinstance(output, Mapping) and isinstance(output.get("payload"), Mapping)):
+    if not _is_envelope(output):
         return output, default_key, {}
     payload = output["payload"]
     for key in _MEDIA_KEYS:
