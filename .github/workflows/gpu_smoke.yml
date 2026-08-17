@@ -46,7 +46,7 @@ permissions:
   pull-requests: read
 
 env:
-  IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:vllm023.dev1"
+  IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:uv.cu130"
   DYNAMIC_RUNNER_ENDPOINT: "https://sd7upeujs1b9g1a958pn0.apigateway-cn-beijing.volceapi.com/runner"
   HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
   NO_PROXY: "localhost,127.0.0.1,hf-mirror.com"

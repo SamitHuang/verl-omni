@@ -57,7 +57,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:vllm023.dev1"
+  IMAGE: "verl-ci-cn-beijing.cr.volces.com/verlai/verl:uv.cu130"
   DYNAMIC_RUNNER_ENDPOINT: "https://sd7upeujs1b9g1a958pn0.apigateway-cn-beijing.volceapi.com/runner"
   BASELINE_ARTIFACT_NAME: l3-nightly-baseline
   BASELINE_STAGING_ARTIFACT_PREFIX: l3-nightly-baseline-staging
@@ -150,7 +150,7 @@ jobs:
         env:
           PIP_EXTRA_INDEX_URL: https://pypi.org/simple
         run: |
-          # vllm023.dev1 image PyPI mirror may lag pypi.org (e.g. kernels, fa3-fwd).
+          # Base image PyPI mirror may lag pypi.org (e.g. kernels, fa3-fwd).
           pip3 install ".[gpu,dev,audio]"
           pip3 install "vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git@$(cat .github/vllm_omni_pin.txt)"
           pip3 install --no-deps --force-reinstall "verl @ git+https://github.com/verl-project/verl.git@$(cat .github/verl_pin.txt)"
