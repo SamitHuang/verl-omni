@@ -185,6 +185,8 @@ jobs:
           uv pip install --system --break-system-packages torchcodec librosa soundfile av audioread
           uv pip install --system --break-system-packages "transformers[mistral-common]==${NIGHTLY_PIN_TRANSFORMERS}"
           python3 -c "import importlib.metadata as m; print('[NIGHTLY] pinned deps:', 'transformers='+m.version('transformers'), 'kernels='+m.version('kernels'), 'fa3-fwd='+m.version('fa3-fwd'), 'flash-attn='+m.version('flash-attn'))"
+          # vLLM 0.27 compatibility: install .pth so all Ray workers/subprocesses alias FusedMoE
+          python3 -c "import site, os; code = '''try:\n    import vllm.model_executor.layers.fused_moe as _m\n    import vllm.model_executor.layers.fused_moe.layer as _l\n    if not hasattr(_l, 'FusedMoE'):\n        _l.FusedMoE = getattr(_m, 'FusedMoEExpertsModular', getattr(_m, 'FusedMoEMethodBase', object))\nexcept Exception:\n    pass\n'''; [open(os.path.join(p, '_vllm_moe_compat.py'), 'w').write(code) for p in set(site.getsitepackages()) if os.path.exists(p)]; [open(os.path.join(p, 'verl_omni_vllm_compat.pth'), 'w').write('import _vllm_moe_compat\n') for p in set(site.getsitepackages()) if os.path.exists(p)]"
           if ! command -v python >/dev/null 2>&1; then
             ln -sfn "$(command -v python3)" /usr/local/bin/python
           fi

@@ -40,6 +40,33 @@ try:
             "FusedMoEExpertsModular",
             getattr(_fused_moe, "FusedMoEMethodBase", object),
         )
+
+    # Persist _vllm_moe_compat.py + .pth into site-packages so Ray worker subprocesses also inherit the alias
+    try:
+        import site
+
+        _compat_py = (
+            "try:\n"
+            "    import vllm.model_executor.layers.fused_moe as _m\n"
+            "    import vllm.model_executor.layers.fused_moe.layer as _l\n"
+            "\n"
+            "    if not hasattr(_l, 'FusedMoE'):\n"
+            "        _l.FusedMoE = getattr(_m, 'FusedMoEExpertsModular', getattr(_m, 'FusedMoEMethodBase', object))\n"
+            "except Exception:\n"
+            "    pass\n"
+        )
+        for _site_dir in set(site.getsitepackages()):
+            if os.path.exists(_site_dir):
+                _py_path = os.path.join(_site_dir, "_vllm_moe_compat.py")
+                _pth_path = os.path.join(_site_dir, "verl_omni_vllm_compat.pth")
+                if not os.path.exists(_py_path):
+                    with open(_py_path, "w") as _f:
+                        _f.write(_compat_py)
+                if not os.path.exists(_pth_path):
+                    with open(_pth_path, "w") as _f:
+                        _f.write("import _vllm_moe_compat\n")
+    except Exception:
+        pass
 except Exception:
     pass
 
