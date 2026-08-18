@@ -12,4 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO: Remove this import / conftest after verl is upgraded to 0.9.0
+# (which removes the need for FusedMoE alias on test collection).
 import verl_omni  # noqa: F401
