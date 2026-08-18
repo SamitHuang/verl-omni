@@ -257,6 +257,13 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         engine_args = OmniEngineArgs.from_cli_args(args)
         engine_args = asdict(engine_args)
 
+        # In vLLM 0.27, asdict converts the default FaultToleranceConfig dataclass into a dict.
+        # OmniEngineArgs.__post_init__ auto-enables enable_fault_tolerance when fault_tolerance_config
+        # is a dict, which causes create_engine_config to fail without an external load balancer.
+        # Strip fault_tolerance_config when fault tolerance was not explicitly enabled.
+        if not engine_args.get("enable_fault_tolerance"):
+            engine_args.pop("fault_tolerance_config", None)
+
         deploy_config = getattr(args, "deploy_config", None)
         if deploy_config:
             engine_args["deploy_config"] = deploy_config
