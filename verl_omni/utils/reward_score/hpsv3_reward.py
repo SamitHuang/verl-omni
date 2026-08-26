@@ -377,35 +377,49 @@ def _to_pil_hwc(image) -> Image.Image:
     if isinstance(image, torch.Tensor):
         image = image.cpu().numpy()
     if isinstance(image, np.ndarray):
-        if image.ndim == 3 and image.shape[0] in (1, 3):
+        if image.ndim == 3 and image.shape[0] in (1, 3, 4):
             image = image.transpose(1, 2, 0)
+        if image.shape[-1] == 1:
+            image = image.squeeze(-1)
         image = Image.fromarray(image)
     assert isinstance(image, Image.Image)
     return image
 
 
 def _extract_frames(solution_image, frame_interval: int = 1) -> list[Image.Image]:
-    is_channels_last = solution_image.shape[-1] in (1, 3) if solution_image.ndim >= 3 else False
+    if isinstance(solution_image, np.ndarray):
+        solution_image = torch.from_numpy(solution_image)
+    elif not isinstance(solution_image, torch.Tensor):
+        solution_image = torch.as_tensor(solution_image)
+
+    while solution_image.ndim > 4 and solution_image.shape[0] == 1:
+        solution_image = solution_image.squeeze(0)
 
     if solution_image.ndim == 3:
-        if is_channels_last:
-            solution_image = solution_image.permute(2, 0, 1)
-        solution_image = solution_image.unsqueeze(0)
+        return [_to_pil_hwc(solution_image)]
 
-    elif solution_image.ndim == 4:
-        if is_channels_last:
-            solution_image = solution_image.permute(3, 0, 1, 2)
-        solution_image = solution_image[:, ::frame_interval]
-        solution_image = solution_image.permute(1, 0, 2, 3)
+    if solution_image.ndim == 4:
+        if solution_image.shape[1] in (1, 3, 4):
+            sampled = solution_image[::frame_interval]
+            return [_to_pil_hwc(sampled[i]) for i in range(sampled.shape[0])]
+        elif solution_image.shape[-1] in (1, 3, 4):
+            sampled = solution_image[::frame_interval]
+            return [_to_pil_hwc(sampled[i]) for i in range(sampled.shape[0])]
+        elif solution_image.shape[0] in (1, 3, 4):
+            sampled = solution_image[:, ::frame_interval].permute(1, 0, 2, 3)
+            return [_to_pil_hwc(sampled[i]) for i in range(sampled.shape[0])]
 
-    elif solution_image.ndim == 5:
-        if is_channels_last:
-            solution_image = solution_image.permute(0, 4, 1, 2, 3)
-        solution_image = solution_image[:, :, ::frame_interval]
-        solution_image = solution_image.permute(0, 2, 1, 3, 4)
-        solution_image = solution_image.reshape(-1, *solution_image.shape[2:])
+    if solution_image.ndim == 5:
+        if solution_image.shape[2] in (1, 3, 4):
+            sampled = solution_image[:, ::frame_interval]
+            flattened = sampled.reshape(-1, *sampled.shape[2:])
+            return [_to_pil_hwc(flattened[i]) for i in range(flattened.shape[0])]
+        elif solution_image.shape[1] in (1, 3, 4):
+            sampled = solution_image[:, :, ::frame_interval].permute(0, 2, 1, 3, 4)
+            flattened = sampled.reshape(-1, *sampled.shape[2:])
+            return [_to_pil_hwc(flattened[i]) for i in range(flattened.shape[0])]
 
-    return [_to_pil_hwc(frame) for frame in solution_image]
+    raise ValueError(f"Unsupported solution_image shape: {tuple(solution_image.shape)}")
 
 
 def compute_score_hpsv3(

@@ -36,7 +36,8 @@ if [ "$DEVICE" = "npu" ]; then
 else
     ATTENTION_BACKEND='native'
     ROLLOUT_ATTN_BACKEND='TORCH_SDPA'
-    NUM_GPUS_ACTOR_ROLLOUT_REWARD=8
+    GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
+    NUM_GPUS_ACTOR_ROLLOUT_REWARD=${NUM_GPUS_ACTOR_ROLLOUT_REWARD:-${NUM_GPUS:-$GPU_COUNT}}
     MICRO_BATCH_SIZE=4
     EXPERIMENT_NAME="wan22_5b_t2v_hpsv3_gpu"
     PROJECT_NAME="dance_grpo"
@@ -48,7 +49,17 @@ train_files_path=${TRAIN_FILES_PATH:-$WORKSPACE/data/hpsv3/train.parquet}
 val_files_path=${VAL_FILES_PATH:-$WORKSPACE/data/hpsv3/test.parquet}
 
 model_name=${MODEL_NAME:-Wan-AI/Wan2.2-TI2V-5B-Diffusers}
-export custom_reward_model_path=${CUSTOM_REWARD_MODEL_PATH:-$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors}
+if [ -z "${CUSTOM_REWARD_MODEL_PATH:-}" ]; then
+    if [ -f "$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors" ]; then
+        export custom_reward_model_path="$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors"
+    elif [ -f "/home/public/models/hub/HPSv3/HPSv3.safetensors" ]; then
+        export custom_reward_model_path="/home/public/models/hub/HPSv3/HPSv3.safetensors"
+    else
+        export custom_reward_model_path="$WORKSPACE/CKPT/HPSv3/HPSv3.safetensors"
+    fi
+else
+    export custom_reward_model_path="$CUSTOM_REWARD_MODEL_PATH"
+fi
 custom_reward_function_path=verl_omni/utils/reward_score/hpsv3_reward.py
 
 ROLLOUT_TP=${ROLLOUT_TP:-1}
