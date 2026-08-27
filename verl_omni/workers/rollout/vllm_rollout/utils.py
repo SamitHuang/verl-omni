@@ -50,6 +50,14 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
 
         return super().__new__(cls)
 
+    def is_worker_ready(self) -> bool:
+        """Readiness probe used before hybrid CuMem sleep.
+
+        ``LLMServerManager.create`` must not return until this RPC succeeds,
+        otherwise v1 ``sleep_replicas`` can memcpy unmapped DiffusionWorker pages.
+        """
+        return True
+
     def set_pending_lora_peft_config(self, peft_config: dict | None = None):
         """Stash the actor's LoRA ``peft_config`` for the next
         ``update_weights_from_ipc`` call (separate-async NCCL path only).

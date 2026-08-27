@@ -25,7 +25,6 @@ from typing import Any, Optional
 import numpy as np
 import ray
 import torch
-import torchvision.transforms as T
 import vllm_omni.entrypoints.cli.serve
 import yaml
 from verl.utils.config import omega_conf_to_dataclass
@@ -143,8 +142,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 self.config.max_model_len = self.config.prompt_length + self.config.response_length
 
     def _post_init(self, cuda_visible_devices: str) -> None:
-        """Diffusion needs a PIL→tensor converter; AR does not."""
+        """Diffusion needs a PIL→tensor converter; AR does not.
+        """
         if not self._ar_mode:
+            import torchvision.transforms as T
+
             self._to_tensor = T.PILToTensor()
         self._lora_request_cache: LoRARequest | None | object = _LORA_REQUEST_CACHE_MISS
         self._lora_resolve_lock = asyncio.Lock()
@@ -376,6 +378,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             self._temp_deploy_ctx = None
 
         self.engine = engine_client
+        await self._wait_for_diffusion_worker()
         self._server_port, self._server_task = await run_uvicorn(app, args, self._server_address)
 
     async def run_headless(self, args: argparse.Namespace):
@@ -408,6 +411,46 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             self._invalidate_lora_request_cache()
         await super().set_global_steps(global_steps)
 
+    async def _wait_for_diffusion_worker(self) -> None:
+        """Block until DiffusionWorker can serve RPCs.
+
+        ``AsyncOmni`` + Orchestrator can mark the HTTP path ready while
+        ``DiffusionWorker-0`` is still in ``Py_RunMain``. Hybrid CuMem sleep in
+        that window ``cudaMemcpy``s unmapped pages and segfaults, which is the
+        Qwen-Image v1 failure mode (SD3.5 often finishes init first).
+        """
+        if self._ar_mode:
+            return
+        logger.info("Waiting for vLLM-Omni diffusion worker to accept RPCs")
+        try:
+            collective_rpc = getattr(self.engine, "collective_rpc", None)
+            if callable(collective_rpc):
+                result = collective_rpc("is_worker_ready")
+                if asyncio.iscoroutine(result):
+                    await result
+            else:
+                await self.engine.list_loras()
+        except Exception as exc:
+            logger.warning("diffusion worker readiness probe failed (%s); falling back to list_loras", exc)
+            await self.engine.list_loras()
+        logger.info("vLLM-Omni diffusion worker is ready")
+
+    async def _reset_encoder_cache_best_effort(self) -> None:
+        """Drop cached text-encoder states while GPU pages are still mapped.
+
+        Must run *before* level-1 sleep. After CuMem offload the Orchestrator
+        path is unsupported, and a late reset can ``cudaMemcpy`` unmapped pages.
+        """
+        reset = getattr(self.engine, "reset_encoder_cache", None)
+        if reset is None:
+            return
+        try:
+            result = reset()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:
+            logger.warning("reset_encoder_cache skipped: %s", exc)
+
     async def _sleep_hybrid(self):
         """Preserve non-actor pipeline weights during hybrid training sleep.
 
@@ -425,8 +468,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         # TODO (andy): use `sleep_level=2` in the future when the
         #  trainer side incorporates the whole components of the model.
         self._invalidate_lora_request_cache()
+        # Encoder cache lives in the same CuMem pool as weights. Reset it
+        # before offload; a post-sleep reset is a no-op on Orchestrator and
+        # can memcpy unmapped pages on Qwen-Image's VL encoder.
+        await self._reset_encoder_cache_best_effort()
         await self.engine.sleep(level=1)
-        await self.engine.reset_encoder_cache()
 
     async def resume_generation(self):
         if self.node_rank == 0:
