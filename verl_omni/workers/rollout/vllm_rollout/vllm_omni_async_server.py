@@ -435,21 +435,38 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             await self.engine.list_loras()
         logger.info("vLLM-Omni diffusion worker is ready")
 
-    async def _reset_encoder_cache_best_effort(self) -> None:
-        """Drop cached text-encoder states while GPU pages are still mapped.
+    def _uses_async_omni_orchestrator(self) -> bool:
+        """True when this server's engine is AsyncOmni (Orchestrator), not AsyncLLM.
 
-        Must run *before* level-1 sleep. After CuMem offload the Orchestrator
-        path is unsupported, and a late reset can ``cudaMemcpy`` unmapped pages.
+        Do not use ``engine.output_processor`` as the discriminator: AsyncOmni
+        subclasses vLLM ``EngineClient``, which may expose that attribute and
+        send abort/sleep into ``pause_generation`` → ``reset_*_cache`` (unsupported
+        on Orchestrator) then ``handle_sleep_task``.
         """
-        reset = getattr(self.engine, "reset_encoder_cache", None)
-        if reset is None:
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return False
+        if type(engine).__name__ == "AsyncOmni":
+            return True
+        inner = getattr(engine, "engine", None)
+        return getattr(inner, "stage_clients", None) is not None
+
+    async def sleep(self):
+        """Hybrid sleep without Orchestrator-unsupported ``reset_*_cache``.
+
+        Parent ``vLLMHttpServer.sleep`` may ``pause_generation`` (logs
+        reset_prefix/mm/encoder_cache warnings) then ``engine.sleep()``. After
+        Qwen-Image's first generate, that CuMem memcpy goes through torchvision's
+        bundled libcudart and SIGSEGVs. Drain in-flight work, then level-1 sleep
+        only. The DiffusionWorker extension skips the memcpy when that libcudart
+        is mapped.
+        """
+        if self.node_rank != 0 or not getattr(self.config, "free_cache_engine", True):
             return
-        try:
-            result = reset()
-            if asyncio.iscoroutine(result):
-                await result
-        except Exception as exc:
-            logger.warning("reset_encoder_cache skipped: %s", exc)
+        if self._uses_async_omni_orchestrator():
+            await self._sleep_hybrid()
+            return
+        await super().sleep()
 
     async def _sleep_hybrid(self):
         """Preserve non-actor pipeline weights during hybrid training sleep.
@@ -460,6 +477,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         weight syncs. Use level-1 sleep so those weights are offloaded and can
         be restored on wake-up instead of discarded by level-2 sleep.
 
+        Do **not** call ``reset_prefix_cache`` / ``reset_mm_cache`` /
+        ``reset_encoder_cache``: AsyncOmni only logs that they are unsupported
+        with Orchestrator, and a post-sleep reset is what parent verl does for
+        vLLM >= 0.17.
+
         Route through ``engine.sleep()`` (``handle_sleep_task``), not raw
         ``collective_rpc("sleep")``. The raw RPC skips the pre-offload CUDA
         sync, so ``CuMemAllocator`` ``cudaMemcpy`` can segfault with
@@ -468,10 +490,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         # TODO (andy): use `sleep_level=2` in the future when the
         #  trainer side incorporates the whole components of the model.
         self._invalidate_lora_request_cache()
-        # Encoder cache lives in the same CuMem pool as weights. Reset it
-        # before offload; a post-sleep reset is a no-op on Orchestrator and
-        # can memcpy unmapped pages on Qwen-Image's VL encoder.
-        await self._reset_encoder_cache_best_effort()
         await self.engine.sleep(level=1)
 
     async def resume_generation(self):
@@ -852,9 +870,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         sleep runs. v1 TransferQueue workers spawn generation without waiting,
         so sleeping without this drain memcpy's CuMem pages still in use.
         """
-        engine = self.engine
-        if getattr(engine, "output_processor", None) is not None:
+        if not self._uses_async_omni_orchestrator():
             return await super().wait_for_requests_to_drain()
+        # Wait for in-flight generate to finish. Do not hard-abort first:
+        # abort then CuMem-sleep races with DiffusionWorker kernels (Qwen-Image).
         await self.abort_all_requests(reset_prefix_cache=False)
 
     # -----------------------------------------------------------------------
@@ -871,7 +890,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         drains and the drain terminates quickly in practice.
         """
         engine = self.engine
-        if getattr(engine, "output_processor", None) is not None:
+        if not self._uses_async_omni_orchestrator():
             return await super().abort_all_requests(reset_prefix_cache)
 
         try:
@@ -906,8 +925,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
                 await asyncio.sleep(drain_poll_interval_s)
 
             if drained:
-                if reset_prefix_cache:
-                    await self.clear_kv_cache()
                 logger.info(
                     "abort_all_requests: drained all in-flight requests in %.2fs; no abort needed",
                     time.monotonic() - drain_start,
@@ -938,10 +955,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             # Orchestrator already dropped the real abort output.
             for internal_id, state in in_flight_states:
                 self._enqueue_abort_output(internal_id, state)
-
-            if reset_prefix_cache:
-                await self.clear_kv_cache()
-                logger.info("Prefix cache reset after abort")
 
             logger.info(f"Aborted {len(request_ids)} requests: {request_ids}")
             return {"aborted_count": len(request_ids), "request_ids": request_ids}
@@ -990,7 +1003,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
     async def abort_request(self, request_id: str, reset_prefix_cache: bool = True) -> dict[str, Any]:
         """Abort a single in-flight request on the AsyncOmni engine."""
         engine = self.engine
-        if getattr(engine, "output_processor", None) is not None:
+        if not self._uses_async_omni_orchestrator():
             return await super().abort_request(request_id, reset_prefix_cache)
 
         try:
@@ -1007,9 +1020,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             if in_flight_state is not None:
                 self._enqueue_abort_output(in_flight_state.request_id, in_flight_state)
 
-            if reset_prefix_cache:
-                await self.clear_kv_cache()
-                logger.info(f"Prefix cache reset after abort request {request_id}")
             logger.info(f"Aborted request: {request_id}")
             return {"aborted": True, "request_id": request_id}
         except Exception as e:

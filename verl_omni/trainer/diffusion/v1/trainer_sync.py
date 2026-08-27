@@ -47,7 +47,7 @@ class PolicyGradientDiffusionTrainerV1Sync(PolicyGradientDiffusionTrainerV1):
     Hook behavior:
 
     - ``on_init_end``: update rollout weights at the current ``global_steps``.
-    - ``on_sample_end``: drain/abort leftover TQ sessions, then sleep/offload
+    - ``on_sample_end``: wait for leftover TQ sessions to finish, then sleep/offload
       rollout weight memory so the colocated actor can train.
     - ``on_step_end``: update rollout weights after the actor update.
     """
@@ -63,8 +63,8 @@ class PolicyGradientDiffusionTrainerV1Sync(PolicyGradientDiffusionTrainerV1):
 
     def on_sample_end(self):
         # v1 TQ ``generate_sequences`` is fire-and-forget: replay_buffer.sample()
-        # can return while other n-way sessions are still on the GPU. Drain /
-        # abort those in-flight requests before CuMem sleep, matching
-        # ``switch_to_trainer`` in the separate-async trainer.
-        self.checkpoint_manager.abort_replicas()
+        # can return while other n-way sessions are still on the GPU. Wait for
+        # those to finish, then CuMem sleep. Abort-then-sleep races with
+        # DiffusionWorker kernels and hits torchvision's libcudart on Qwen-Image.
+        self._wait_for_tq_background_tasks()
         self.checkpoint_manager.sleep_replicas()
