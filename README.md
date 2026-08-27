@@ -16,6 +16,7 @@ It originated from the multi-modal generation RL effort in `verl`, and now has a
 
 ## News 🔥
 
+- **[2026-08]** **[DiffusionOPD](docs/algo/diffusion_opd.md)** (on-policy distillation, including multi-teacher MOPD) is supported on SD3.5.
 - **[2026-08]** **[MiniMax-H3](examples/diffusionnft_trainer/minimax_h3/README.md)** text-to-audio-video is now supported with DiffusionNFT. See the [T2VA LoRA example](examples/diffusionnft_trainer/minimax_h3/README.md).
 - **[2026-08]** We have released [v0.2.0](https://github.com/verl-project/verl-omni/releases/tag/v0.2.0) for faster diffusion rl and more stable Qwen3-Omni multimodal training.
 - **[2026-08]** [LTX2.3](examples/flowgrpo_trainer/ltx2/README.md) text-to-video+audio model is now supported with FlowGRPO.
@@ -147,9 +148,9 @@ Visit our [documentation](https://verl-omni.readthedocs.io/en/latest/index.html)
     <td>✅</td>
   </tr>
   <tr>
-    <td rowspan="3">SD3.5</td>
-    <td rowspan="3">Diffusion generator</td>
-    <td rowspan="3">Text → Image</td>
+    <td rowspan="4">SD3.5</td>
+    <td rowspan="4">Diffusion generator</td>
+    <td rowspan="4">Text → Image</td>
     <td>DPO</td>
     <td>✅</td>
   </tr>
@@ -159,6 +160,10 @@ Visit our [documentation](https://verl-omni.readthedocs.io/en/latest/index.html)
   </tr>
   <tr>
     <td>FlowGRPO w/ DiNa-LRM</td>
+    <td>✅</td>
+  </tr>
+  <tr>
+    <td><a href="docs/algo/diffusion_opd.md">DiffusionOPD</a> (incl. MOPD)</td>
     <td>✅</td>
   </tr>
   <tr>
