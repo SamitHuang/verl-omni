@@ -796,8 +796,20 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         )
 
     async def wait_for_requests_to_drain(self):
-        # TODO (mike): implement this once DP is supported.
-        pass
+        """Block until AsyncOmni has no in-flight requests, then abort leftovers.
+
+        Parent ``vLLMReplica.sleep()`` calls this before hybrid sleep. The LLM
+        server waits on ``engine.wait_for_requests_to_drain()``; AsyncOmni has
+        no such API and tracks in-flight work in ``request_states``.
+
+        v0 ``generate_sequences`` is blocking, so this is a no-op by the time
+        sleep runs. v1 TransferQueue workers spawn generation without waiting,
+        so sleeping without this drain memcpy's CuMem pages still in use.
+        """
+        engine = self.engine
+        if getattr(engine, "output_processor", None) is not None:
+            return await super().wait_for_requests_to_drain()
+        await self.abort_all_requests(reset_prefix_cache=False)
 
     # -----------------------------------------------------------------------
     # Abort: AsyncOmni has no `output_processor` (it routes through an
