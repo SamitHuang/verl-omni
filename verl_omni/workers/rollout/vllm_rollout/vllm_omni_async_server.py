@@ -391,21 +391,16 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         return ["weights"]
 
     async def wake_up(self, tags: list[str] | None = None):
-        """Override parent to use collective_rpc instead of engine.wake_up().
+        """Restore weights via ``AsyncOmni.wake_up`` (``handle_wake_task``).
 
-        The parent (verl ``1927ad33``+) calls ``self.engine.wake_up(tags=...)``
-        which triggers CUDA initialisation in this HTTP server process when
-        running under vLLM-Omni (AsyncOmni engine).
-        Use ``collective_rpc`` instead.
-
-        # TODO (long): drop this override once vllm-omni wake_up
-        without triggering GPU initialisation.
+        Raw ``collective_rpc("wake_up")`` skips the ACK protocol and can
+        memcpy unmapped CuMem pages in the diffusion worker. Keep this
+        override so hybrid rollout only restores the ``weights`` tag (no KV
+        cache) instead of the parent LLM default.
         """
         if self.node_rank != 0:
             return
-        await self.engine.collective_rpc(
-            "wake_up", kwargs={"tags": tags if tags is not None else self._get_wake_up_tags()}
-        )
+        await self.engine.wake_up(tags=tags if tags is not None else self._get_wake_up_tags())
         self._invalidate_lora_request_cache()
 
     async def set_global_steps(self, global_steps: int):
@@ -421,11 +416,16 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         of the trainable actor and therefore are not included in full-model
         weight syncs. Use level-1 sleep so those weights are offloaded and can
         be restored on wake-up instead of discarded by level-2 sleep.
+
+        Route through ``engine.sleep()`` (``handle_sleep_task``), not raw
+        ``collective_rpc("sleep")``. The raw RPC skips the pre-offload CUDA
+        sync, so ``CuMemAllocator`` ``cudaMemcpy`` can segfault with
+        "invalid permissions for mapped object".
         """
         # TODO (andy): use `sleep_level=2` in the future when the
         #  trainer side incorporates the whole components of the model.
         self._invalidate_lora_request_cache()
-        await self.engine.collective_rpc("sleep", kwargs={"level": 1})
+        await self.engine.sleep(level=1)
         await self.engine.reset_encoder_cache()
 
     async def resume_generation(self):
