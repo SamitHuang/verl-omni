@@ -85,6 +85,25 @@ def skipped_cumem_sleep_ack(task, worker: object):
     )
 
 
+def skipped_cumem_wake_ack(task, worker: object):
+    """Return a SUCCESS ACK for a wake that is a no-op because sleep was skipped."""
+    from vllm_omni.diffusion.data import OmniACK, OmniWakeTask
+
+    if isinstance(task, dict):
+        task = OmniWakeTask(**task)
+    rank = getattr(worker, "rank", 0)
+    if rank != 0:
+        return None
+    return OmniACK(
+        task_id=task.task_id,
+        status="SUCCESS",
+        stage_id=getattr(worker, "stage_id", 0),
+        rank=rank,
+        freed_bytes=0,
+        metadata={"state": "WARM", "skipped": "cumem_sleep_was_skipped"},
+    )
+
+
 class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
     """
     The class for vLLM-Omni's worker to inherit from, in the colocate setting.
@@ -100,6 +119,7 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
     """
 
     _pending_lora_peft_config: dict | None = None
+    _cumem_sleep_skipped: bool = False
 
     def __new__(cls, **kwargs):
         set_death_signal()
@@ -112,6 +132,7 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
     def sleep(self, level: int = 1):
         """Offload CuMem weights unless torchvision's libcudart would SIGSEGV."""
         if should_skip_unsafe_cumem_sleep(self):
+            self._cumem_sleep_skipped = True
             logger.warning(
                 "Skipping CuMem sleep: torchvision bundled libcudart is mapped. "
                 "Offload would cudaMemcpy PyTorch CuMem pages through the wrong "
@@ -119,6 +140,7 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
                 "FSDP param_offload for colocated actor VRAM."
             )
             return 0
+        self._cumem_sleep_skipped = False
         parent = getattr(super(), "sleep", None)
         if callable(parent):
             return parent(level)
@@ -127,14 +149,43 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
     def handle_sleep_task(self, task):
         """ACK-protocol sleep. Skip CuMem memcpy when torchvision libcudart is mapped."""
         if should_skip_unsafe_cumem_sleep(self):
+            self._cumem_sleep_skipped = True
             logger.warning(
                 "Skipping handle_sleep_task CuMem offload: torchvision bundled "
                 "libcudart is mapped in this DiffusionWorker."
             )
             return skipped_cumem_sleep_ack(task, self)
+        self._cumem_sleep_skipped = False
         parent = getattr(super(), "handle_sleep_task", None)
         if not callable(parent):
             raise TypeError("handle_sleep_task is not available on the worker MRO")
+        return parent(task)
+
+    def wake_up(self, tags: list[str] | None = None):
+        """No-op when the matching sleep was skipped.
+
+        vLLM 0.26's ``CuMemAllocator.wake_up`` re-creates every tagged
+        allocation unconditionally (no per-allocation asleep guard). Waking
+        after a skipped sleep therefore cuMemMaps already-mapped pages, which
+        fails with "CUDA Error: invalid argument" and leaks the freshly
+        created physical handle (vllm-project/vllm#36651).
+        """
+        if getattr(self, "_cumem_sleep_skipped", False):
+            logger.info("Skipping wake_up: previous CuMem sleep was skipped, nothing to restore.")
+            return True
+        parent = getattr(super(), "wake_up", None)
+        if callable(parent):
+            return parent(tags)
+        return True
+
+    def handle_wake_task(self, task):
+        """ACK-protocol wake. No-op when the matching sleep was skipped."""
+        if getattr(self, "_cumem_sleep_skipped", False):
+            logger.info("Skipping handle_wake_task: previous CuMem sleep was skipped.")
+            return skipped_cumem_wake_ack(task, self)
+        parent = getattr(super(), "handle_wake_task", None)
+        if not callable(parent):
+            raise TypeError("handle_wake_task is not available on the worker MRO")
         return parent(task)
 
     def is_worker_ready(self) -> bool:
