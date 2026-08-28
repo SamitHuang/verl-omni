@@ -311,12 +311,20 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         # [OPTIONAL] colocated reward model
         if self.reward_loop_manager.reward_loop_worker_handles is None and self.use_rm:
             with marked_timer("reward", timing_raw, color="yellow"):
-                self.checkpoint_manager.sleep_replicas()
+                # Qwen-Image v0 sleeps once after generate, then rewards while
+                # rollout stays off GPU. v1 sync already slept in on_sample_end;
+                # a second CuMem sleep (and the wake that follows) is the
+                # Qwen-Image-only crash. SD3.5 never enters this block because
+                # it uses a separate reward pool.
+                already_slept = self.trainer_mode == "sync" and self._is_qwen_image_rollout()
+                if not already_slept:
+                    self.checkpoint_manager.sleep_replicas()
                 # compute_rm_score returns an rm_scores-only DataProto; union so
                 # the rollout fields (prompts/responses/all_latents/all_timesteps)
                 # survive for old_log_prob and the actor update.
                 data = data.union(self._compute_reward_colocate(data))
-                self.checkpoint_manager.update_weights(self.global_steps)
+                if not already_slept:
+                    self.checkpoint_manager.update_weights(self.global_steps)
 
         data = self._balance_batch(data, metrics=metrics)
 
@@ -415,6 +423,22 @@ class PolicyGradientDiffusionTrainerV1(ABC):
     def on_sample_end(self):
         """Called after sampling a batch from the replay buffer."""
         return
+
+    def _is_qwen_image_rollout(self) -> bool:
+        """True for Qwen-Image / Qwen-Image-Edit rollouts (not SD3.5 or other diffusion)."""
+        path = str(OmegaConf.select(self.config, "actor_rollout_ref.model.path") or "")
+        return "qwen-image" in path.lower() or "qwen_image" in path.lower()
+
+    def _wait_for_qwen_image_generate_idle(self) -> None:
+        """Make v1 Qwen-Image generate→sleep timing match v0 (blocking generate)."""
+        if not self._is_qwen_image_rollout():
+            return
+        manager = getattr(self, "agent_loop_manager", None)
+        if manager is None:
+            return
+        from verl_omni.agent_loop.diffusion_agent_loop_tq import wait_for_diffusion_tq_background_tasks
+
+        wait_for_diffusion_tq_background_tasks(manager)
 
     def release_rollout_cache_for_weight_sync(self) -> None:
         """No-op for pure diffusion models (no KV cache)."""
@@ -1010,6 +1034,7 @@ class PolicyGradientDiffusionTrainerV1(ABC):
                 continue
 
             if self.use_rm and self.reward_loop_manager.reward_loop_worker_handles is None:
+                self._wait_for_qwen_image_generate_idle()
                 self.checkpoint_manager.sleep_replicas()
                 # Same union as the training path: keep prompts/responses for logging.
                 data = data.union(self._compute_reward_colocate(data))

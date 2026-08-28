@@ -204,6 +204,35 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
                     raise RuntimeError("Diffusion pipeline worker has no load_weights-capable pipeline")
                 receiver.receive_weights(on_bucket_received=lambda weights, *args, **kwargs: load_fn(weights))
 
+    def _is_qwen_image_pipeline(self) -> bool:
+        pipeline = getattr(getattr(self, "model_runner", None), "pipeline", None)
+        name = type(pipeline).__name__ if pipeline is not None else ""
+        return "QwenImage" in name
+
+    def _idle_qwen_image_gpu_before_cumem_sleep(self) -> None:
+        """Qwen-Image only: idle the GPU before CuMem offload (v0 generate is blocking).
+
+        SD3.5 and other pipelines are unchanged. Still calls CuMem afterward.
+        """
+        if not self._is_qwen_image_pipeline():
+            return
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+    def sleep(self, level: int = 1):
+        self._idle_qwen_image_gpu_before_cumem_sleep()
+        return super().sleep(level)
+
+    def handle_sleep_task(self, task):
+        self._idle_qwen_image_gpu_before_cumem_sleep()
+        return super().handle_sleep_task(task)
+
     def _get_zmq_handle(self) -> str:
         """Get ZMQ handle for communication.
         Uses Ray job id + replica_rank + local_rank to form the handle so it

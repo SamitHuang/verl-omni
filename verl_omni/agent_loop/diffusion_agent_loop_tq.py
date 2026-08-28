@@ -263,6 +263,20 @@ class DiffusionAgentLoopWorkerTQ(DiffusionAgentLoopWorker):
             partition_id=partition_id,
         )
 
+    async def wait_for_background_tasks(self) -> None:
+        """Block until fire-and-forget generate tasks finish (v0 generate is blocking)."""
+        pending = list(self.background_tasks)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+
+def wait_for_diffusion_tq_background_tasks(manager) -> None:
+    """Wait until every TQ worker has finished its in-flight generate tasks."""
+    workers = getattr(manager, "agent_loop_workers", None)
+    if not workers:
+        return
+    ray.get([worker.wait_for_background_tasks.remote() for worker in workers])
+
 
 @auto_await
 async def create_diffusion_agent_loop_manager(*args, **kwargs):
