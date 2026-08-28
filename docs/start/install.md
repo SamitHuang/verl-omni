@@ -261,6 +261,16 @@ docker build --no-cache \
   .
 ```
 
+The NPU images install `verl-omni` from the Docker build context, matching [`docker/Dockerfile.cuda`](https://github.com/verl-project/verl-omni/blob/main/docker/Dockerfile.cuda). Building from `release/v0.2.0` therefore bakes that tree, not GitHub `main`. To clone a remote branch or tag instead:
+
+```bash
+docker build \
+  -f docker/Dockerfile.a2.npu \
+  --build-arg VERL_OMNI_REF=release/v0.2.0 \
+  -t verl-omni:npu-a2 \
+  .
+```
+
 You may choose different image tags locally. If you do so, replace the image name in the `docker run` command accordingly.
 
 ### Launch on Ascend Atlas A3, 16 NPU

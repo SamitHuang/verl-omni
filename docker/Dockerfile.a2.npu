@@ -20,7 +20,10 @@ ARG VERL_REPO="https://github.com/verl-project/verl.git"
 ARG VERL_REF=""
 
 ARG VERL_OMNI_REPO="https://github.com/verl-project/verl-omni.git"
-ARG VERL_OMNI_REF="main"
+# Default: install from the Docker build context so a release-branch checkout
+# is not replaced by GitHub `main`. Override with:
+#   --build-arg VERL_OMNI_REF=<branch-or-tag>
+ARG VERL_OMNI_REF=""
 
 ARG SOC_VERSION="ascend910b1"
 ARG COMPILE_CUSTOM_KERNELS=1
@@ -137,10 +140,18 @@ RUN VERL_REF="${VERL_REF:-$(tr -d '[:space:]' < /workspace/pins/verl_pin.txt)}" 
         --extra-index-url ${ASCEND_PIP_INDEX_URL} \
         --extra-index-url ${PYTORCH_CPU_INDEX_URL}
 
-# Install verl-omni.
+# Install verl-omni from the Docker build context (the tree you built).
 # Do NOT install the train extra here, because train installs verl again.
 # verl has already been installed from /workspace/src/verl using .github/verl_pin.txt.
-RUN git clone --depth 1 -b ${VERL_OMNI_REF} ${VERL_OMNI_REPO} /workspace/src/verl-omni && \
+COPY pyproject.toml setup.py README.md /workspace/src/verl-omni/
+COPY verl_omni /workspace/src/verl-omni/verl_omni
+RUN if [ -n "${VERL_OMNI_REF}" ]; then \
+        echo "Installing verl-omni from ${VERL_OMNI_REPO}@${VERL_OMNI_REF}" && \
+        rm -rf /workspace/src/verl-omni && \
+        git clone --depth 1 -b "${VERL_OMNI_REF}" "${VERL_OMNI_REPO}" /workspace/src/verl-omni; \
+    else \
+        echo "Installing verl-omni from the Docker build context"; \
+    fi && \
     cd /workspace/src/verl-omni && \
     python3 -m pip install -e ".[ocr]" \
         --extra-index-url ${ASCEND_PIP_INDEX_URL} \
