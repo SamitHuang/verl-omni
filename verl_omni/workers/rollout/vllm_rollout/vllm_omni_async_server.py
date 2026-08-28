@@ -419,27 +419,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         await super().set_global_steps(global_steps)
 
     async def _wait_for_diffusion_worker(self) -> None:
-        """Block until DiffusionWorker can serve RPCs.
-
-        ``AsyncOmni`` + Orchestrator can mark the HTTP path ready while
-        ``DiffusionWorker-0`` is still in ``Py_RunMain``. Hybrid CuMem sleep in
-        that window ``cudaMemcpy``s unmapped pages and segfaults, which is the
-        Qwen-Image v1 failure mode (SD3.5 often finishes init first).
-        """
+        """Block until DiffusionWorker can serve RPCs."""
         if self._ar_mode:
             return
         logger.info("Waiting for vLLM-Omni diffusion worker to accept RPCs")
-        try:
-            collective_rpc = getattr(self.engine, "collective_rpc", None)
-            if callable(collective_rpc):
-                result = collective_rpc("is_worker_ready")
-                if asyncio.iscoroutine(result):
-                    await result
-            else:
-                await self.engine.list_loras()
-        except Exception as exc:
-            logger.warning("diffusion worker readiness probe failed (%s); falling back to list_loras", exc)
-            await self.engine.list_loras()
+        await self.engine.list_loras()
         logger.info("vLLM-Omni diffusion worker is ready")
 
     def _uses_async_omni_orchestrator(self) -> bool:
@@ -462,11 +446,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         """Hybrid sleep without Orchestrator-unsupported ``reset_*_cache``.
 
         Parent ``vLLMHttpServer.sleep`` may ``pause_generation`` (logs
-        reset_prefix/mm/encoder_cache warnings) then ``engine.sleep()``. After
-        Qwen-Image's first generate, that CuMem memcpy goes through torchvision's
-        bundled libcudart and SIGSEGVs. Drain in-flight work, then level-1 sleep
-        only. The DiffusionWorker extension skips the memcpy when that libcudart
-        is mapped.
+        reset_prefix/mm/encoder_cache warnings) then ``engine.sleep()``. Drain
+        in-flight work, then level-1 sleep only. Recipes that cannot safely
+        CuMem-offload (Qwen-Image + torchvision libcudart) should set
+        ``free_cache_engine=False`` so this method returns without sleeping.
         """
         if self.node_rank != 0 or not getattr(self.config, "free_cache_engine", True):
             return

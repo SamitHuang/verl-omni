@@ -8,6 +8,10 @@
 # set on the CLI. Model, LoRA, reward, pipeline, and SDE knobs match the v0
 # 4-GPU recipe.
 #
+# free_cache_engine=False: Qwen-Image's VL path maps torchvision's bundled
+# libcudart. CuMem sleep/wake then SIGSEGVs (or leaks on wake). Keep rollout
+# weights resident and rely on FSDP param_offload for colocated actor VRAM.
+#
 # Reference (legacy v0 script):
 # verl-omni/examples/flowgrpo_trainer/qwen_image/run_qwen_image_ocr_lora.sh
 set -x
@@ -61,6 +65,7 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     actor_rollout_ref.rollout.agent.num_workers=$((NUM_GPUS_ACTOR_ROLLOUT_REWARD / ROLLOUT_TP)) \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
+    actor_rollout_ref.rollout.free_cache_engine=False \
     actor_rollout_ref.rollout.pipeline.true_cfg_scale=4.0 \
     actor_rollout_ref.rollout.pipeline.max_sequence_length=256 \
     actor_rollout_ref.rollout.algo.noise_level=1.2 \
