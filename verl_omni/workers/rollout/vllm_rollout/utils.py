@@ -41,6 +41,7 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
     """
 
     _pending_lora_peft_config: dict | None = None
+    _pipeline_sleep_device = None
 
     def __new__(cls, **kwargs):
         set_death_signal()
@@ -49,6 +50,45 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
         VLLMOmniHijack.hijack()
 
         return super().__new__(cls)
+
+    def _diffusion_pipeline(self):
+        """Return the vLLM-Omni diffusion pipeline, or None for AR workers."""
+        runner = getattr(self, "model_runner", None)
+        return getattr(runner, "pipeline", None) if runner is not None else None
+
+    def sleep(self, level: int = 1):
+        """Offload diffusion weights so colocated actor training can use the GPU.
+
+        Do **not** call ``CuMemAllocator.sleep`` on the diffusion pipeline:
+        Qwen-Image imports torchvision, whose bundled libcudart then wins the
+        ctypes ``cudaMemcpy`` and SIGSEGVs. ``nn.Module.to("cpu")`` uses
+        PyTorch's own runtime, still frees VRAM, and ``handle_sleep_task``
+        (parent) calls this method so the ACK protocol is unchanged.
+        """
+        pipeline = self._diffusion_pipeline()
+        if pipeline is None:
+            parent = getattr(super(), "sleep", None)
+            return parent(level) if callable(parent) else 0
+        self._pipeline_sleep_device = getattr(self, "device", None)
+        pipeline.to("cpu")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        logger.info("Diffusion pipeline offloaded to CPU (PyTorch, not CuMem)")
+        return 0
+
+    def wake_up(self, tags: list[str] | None = None):
+        """Restore a pipeline that ``sleep`` moved to CPU. AR workers use CuMem."""
+        pipeline = self._diffusion_pipeline()
+        if pipeline is None:
+            parent = getattr(super(), "wake_up", None)
+            return parent(tags) if callable(parent) else True
+        device = self._pipeline_sleep_device or getattr(self, "device", None)
+        if device is not None:
+            pipeline.to(device)
+        self._pipeline_sleep_device = None
+        logger.info("Diffusion pipeline restored to %s", device)
+        return True
 
     def set_pending_lora_peft_config(self, peft_config: dict | None = None):
         """Stash the actor's LoRA ``peft_config`` for the next

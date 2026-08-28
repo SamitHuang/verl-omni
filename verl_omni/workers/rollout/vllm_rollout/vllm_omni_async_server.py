@@ -447,9 +447,9 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
         Parent ``vLLMHttpServer.sleep`` may ``pause_generation`` (logs
         reset_prefix/mm/encoder_cache warnings) then ``engine.sleep()``. Drain
-        in-flight work, then level-1 sleep only. Recipes that cannot safely
-        CuMem-offload (Qwen-Image + torchvision libcudart) should set
-        ``free_cache_engine=False`` so this method returns without sleeping.
+        in-flight work, then level-1 sleep only. Diffusion workers offload
+        via PyTorch ``pipeline.to("cpu")`` (not CuMem) so VRAM is freed
+        without the torchvision libcudart SIGSEGV.
         """
         if self.node_rank != 0 or not getattr(self.config, "free_cache_engine", True):
             return
