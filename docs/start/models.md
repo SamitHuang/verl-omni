@@ -277,7 +277,7 @@ trainer's README in `examples/`.
 | GRPO-Guard | ✅ | — | — | — | — | — | — | — |
 | Mix-GRPO | ✅ | — | — | — | — | — | — | — |
 | DanceGRPO | — | — | — | ✅ | — | — | — | — |
-| Diffusion-DPO | ✅ | — | ✅ | — | — | — | — | ✅ |
+| DPO | ✅ | — | ✅ | — | — | — | — | ✅ |
 | DiffusionNFT | ✅ | — | — | — | — | ✅ | — | — |
 | [DiffusionOPD](../algo/diffusion_opd.md) (incl. MOPD) | — | — | ✅ | — | — | — | — | — |
 | GSPO | — | — | — | — | — | — | — | ✅ |
