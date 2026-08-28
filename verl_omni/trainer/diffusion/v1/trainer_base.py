@@ -319,7 +319,10 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         if self.reward_loop_manager.reward_loop_worker_handles is None and self.use_rm:
             with marked_timer("reward", timing_raw, color="yellow"):
                 self.checkpoint_manager.sleep_replicas()
-                data = self._compute_reward_colocate(data)
+                # compute_rm_score returns an rm_scores-only DataProto; union so
+                # the rollout fields (prompts/responses/all_latents/all_timesteps)
+                # survive for old_log_prob and the actor update.
+                data = data.union(self._compute_reward_colocate(data))
                 self.checkpoint_manager.update_weights(self.global_steps)
 
         data = self._balance_batch(data, metrics=metrics)
@@ -1036,7 +1039,8 @@ class PolicyGradientDiffusionTrainerV1(ABC):
 
             if self.use_rm and self.reward_loop_manager.reward_loop_worker_handles is None:
                 self.checkpoint_manager.sleep_replicas()
-                data = self._compute_reward_colocate(data)
+                # Same union as the training path: keep prompts/responses for logging.
+                data = data.union(self._compute_reward_colocate(data))
                 self.checkpoint_manager.update_weights(self.global_steps)
 
             input_ids = data.batch["prompts"]
