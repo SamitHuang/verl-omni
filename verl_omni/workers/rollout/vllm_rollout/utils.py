@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import ctypes
 import logging
 import os
 import sys
@@ -30,37 +29,6 @@ logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 # Linux maps file; tests may patch this.
 _PROC_SELF_MAPS = "/proc/self/maps"
-
-
-def preload_pytorch_cuda_runtime() -> None:
-    """Load PyTorch's CUDA runtime with ``RTLD_GLOBAL`` before torchvision.
-
-    Qwen-Image's VL encoder / image postprocess imports torchvision, whose
-    bundled ``libcudart.so.13`` then wins ``cudaMemcpy``. ``CuMemAllocator``
-    memcpy of PyTorch-mapped pages through that runtime SIGSEGVs with
-    "invalid permissions for mapped object".
-    """
-    try:
-        if torch.cuda.is_available():
-            torch.cuda.init()
-    except Exception:
-        pass
-
-    torch_dir = Path(torch.__file__).resolve().parent
-    candidates: list[Path] = []
-    for base in (torch_dir / "lib", torch_dir / "bin", torch_dir):
-        if not base.is_dir():
-            continue
-        candidates.extend(sorted(base.glob("libcudart.so*")))
-        candidates.extend(sorted(base.glob("cudart64_*.dll")))
-    flags = getattr(ctypes, "RTLD_GLOBAL", 2)
-    for path in candidates:
-        try:
-            ctypes.CDLL(str(path), mode=flags)
-            logger.info("Preloaded PyTorch CUDA runtime from %s", path)
-            return
-        except OSError:
-            continue
 
 
 def torchvision_bundled_cudart_is_mapped() -> bool:
@@ -135,9 +103,6 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
 
     def __new__(cls, **kwargs):
         set_death_signal()
-        # Bind PyTorch's CUDA runtime before this process imports torchvision
-        # (Qwen-Image VL encoder / image postprocess).
-        preload_pytorch_cuda_runtime()
 
         # 1. patch for Lora
         VLLMOmniHijack.hijack()
