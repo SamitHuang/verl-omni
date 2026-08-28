@@ -204,17 +204,17 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
                     raise RuntimeError("Diffusion pipeline worker has no load_weights-capable pipeline")
                 receiver.receive_weights(on_bucket_received=lambda weights, *args, **kwargs: load_fn(weights))
 
-    def _is_qwen_image_pipeline(self) -> bool:
-        pipeline = getattr(getattr(self, "model_runner", None), "pipeline", None)
-        name = type(pipeline).__name__ if pipeline is not None else ""
-        return "QwenImage" in name
+    def _is_diffusion_pipeline_worker(self) -> bool:
+        return getattr(getattr(self, "model_runner", None), "pipeline", None) is not None
 
-    def _idle_qwen_image_gpu_before_cumem_sleep(self) -> None:
-        """Qwen-Image only: idle the GPU before CuMem offload (v0 generate is blocking).
+    def _idle_gpu_before_cumem_sleep(self) -> None:
+        """Idle the GPU before CuMem offload on diffusion workers.
 
-        SD3.5 and other pipelines are unchanged. Still calls CuMem afterward.
+        v1 TQ generate is fire-and-forget, so sleep can race leftover CUDA
+        work; v0 generate is blocking. AR workers have no pipeline and are
+        unchanged. Still calls CuMem afterward.
         """
-        if not self._is_qwen_image_pipeline():
+        if not self._is_diffusion_pipeline_worker():
             return
         try:
             torch.cuda.ipc_collect()
@@ -226,11 +226,11 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
             torch.cuda.synchronize()
 
     def sleep(self, level: int = 1):
-        self._idle_qwen_image_gpu_before_cumem_sleep()
+        self._idle_gpu_before_cumem_sleep()
         return super().sleep(level)
 
     def handle_sleep_task(self, task):
-        self._idle_qwen_image_gpu_before_cumem_sleep()
+        self._idle_gpu_before_cumem_sleep()
         return super().handle_sleep_task(task)
 
     def _get_zmq_handle(self) -> str:

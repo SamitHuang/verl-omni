@@ -311,12 +311,10 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         # [OPTIONAL] colocated reward model
         if self.reward_loop_manager.reward_loop_worker_handles is None and self.use_rm:
             with marked_timer("reward", timing_raw, color="yellow"):
-                # Qwen-Image v0 sleeps once after generate, then rewards while
-                # rollout stays off GPU. v1 sync already slept in on_sample_end;
-                # a second CuMem sleep (and the wake that follows) is the
-                # Qwen-Image-only crash. SD3.5 never enters this block because
-                # it uses a separate reward pool.
-                already_slept = self.trainer_mode == "sync" and self._is_qwen_image_rollout()
+                # v0 sleeps once after generate, then rewards while rollout
+                # stays off GPU. v1 sync already slept in on_sample_end, so a
+                # second CuMem sleep (and the wake that follows) is redundant.
+                already_slept = self.trainer_mode == "sync"
                 if not already_slept:
                     self.checkpoint_manager.sleep_replicas()
                 # compute_rm_score returns an rm_scores-only DataProto; union so
@@ -424,15 +422,8 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         """Called after sampling a batch from the replay buffer."""
         return
 
-    def _is_qwen_image_rollout(self) -> bool:
-        """True for Qwen-Image / Qwen-Image-Edit rollouts (not SD3.5 or other diffusion)."""
-        path = str(OmegaConf.select(self.config, "actor_rollout_ref.model.path") or "")
-        return "qwen-image" in path.lower() or "qwen_image" in path.lower()
-
-    def _wait_for_qwen_image_generate_idle(self) -> None:
-        """Make v1 Qwen-Image generate→sleep timing match v0 (blocking generate)."""
-        if not self._is_qwen_image_rollout():
-            return
+    def _wait_for_generate_idle(self) -> None:
+        """Make v1 generate→sleep timing match v0 (blocking generate)."""
         manager = getattr(self, "agent_loop_manager", None)
         if manager is None:
             return
@@ -1034,7 +1025,7 @@ class PolicyGradientDiffusionTrainerV1(ABC):
                 continue
 
             if self.use_rm and self.reward_loop_manager.reward_loop_worker_handles is None:
-                self._wait_for_qwen_image_generate_idle()
+                self._wait_for_generate_idle()
                 self.checkpoint_manager.sleep_replicas()
                 # Same union as the training path: keep prompts/responses for logging.
                 data = data.union(self._compute_reward_colocate(data))
