@@ -1173,10 +1173,8 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         elif not offloaded:
             self._offload_actor_and_empty_cache(timings)
 
-        # 5. resume kv_cache
-        if self.config.rollout.free_cache_engine:
-            await _timed_await("resume_kv_cache", timings, self.rollout.resume(tags=["kv_cache"]))
-        log_gpu_memory_usage("After resume kv_cache", logger=logger)
+        # 5. Diffusion has no KV cache; do not wake the kv_cache tag.
+        log_gpu_memory_usage("After update_weights (no kv_cache resume)", logger=logger)
 
         self.base_sync_done = True
         set_expandable_segments(True)

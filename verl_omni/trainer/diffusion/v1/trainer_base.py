@@ -374,29 +374,6 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         )
         return batch_meta
 
-    def _wait_for_tq_background_tasks(self) -> None:
-        """Block until DiffusionAgentLoopWorkerTQ fire-and-forget generates finish.
-
-        v1 ``generate_sequences`` returns immediately. ``replay_buffer.sample()``
-        can succeed while sibling n-way sessions are still on the GPU. Aborting
-        those then CuMem-sleeping is the Qwen-Image v1 SIGSEGV. Wait instead.
-        """
-        manager = getattr(self, "agent_loop_manager", None)
-        if manager is None:
-            return
-        workers = getattr(manager, "agent_loop_workers", None)
-        if not workers:
-            return
-        futures = []
-        for worker in workers:
-            wait = getattr(worker, "wait_for_background_tasks", None)
-            if wait is None:
-                continue
-            remote = getattr(wait, "remote", None)
-            futures.append(remote() if callable(remote) else wait())
-        if futures:
-            ray.get(futures)
-
     def on_init_end(self):
         """Called after initialization ends."""
         return
