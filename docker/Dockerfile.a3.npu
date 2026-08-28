@@ -19,7 +19,7 @@ ARG VERL_REPO="https://github.com/verl-project/verl.git"
 ARG VERL_REF=""
 
 ARG VERL_OMNI_REPO="https://github.com/verl-project/verl-omni.git"
-ARG VERL_OMNI_REF="main"
+ARG VERL_OMNI_REF="release/v0.2.0"
 
 ARG SOC_VERSION="ascend910_9391"
 ARG COMPILE_CUSTOM_KERNELS=1
