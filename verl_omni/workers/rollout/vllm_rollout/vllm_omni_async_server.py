@@ -239,15 +239,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         await self.engine.reset_encoder_cache()
 
     async def release_kv_cache(self):
-        """No-op for diffusion: there is no KV cache to free around weight sync.
-
-        Parent verl ``update_weights`` always calls this, then ``resume_kv_cache``.
-        The AR implementation sleeps and immediately wakes weights, which is a
-        second CuMem sleep/wake on a diffusion pipeline that already slept after
-        generate and has no prefix/KV cache. Skip it; keep the AR path below.
-        """
-        if not self._ar_mode:
-            return
+        """Free cache around a weight sync without discarding Omni weights."""
         if self.node_rank != 0 or not self.config.free_cache_engine:
             return
         if self.rollout_mode == RolloutMode.COLOCATED:
@@ -257,9 +249,7 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         await self.engine.collective_rpc("wake_up", kwargs={"tags": ["weights"]})
 
     async def resume_kv_cache(self):
-        """No-op for diffusion. AR restores the kv_cache tag after weight sync."""
-        if not self._ar_mode:
-            return
+        """Restore after a weight sync. Route through collective_rpc like wake_up."""
         if self.node_rank != 0 or not self.config.free_cache_engine:
             return
         if self.rollout_mode == RolloutMode.COLOCATED:
