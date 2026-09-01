@@ -241,6 +241,7 @@ parquet pairs and does not start rollout or reward workers.
 | Qwen-Image | MM-DiT | Qwen2 + T5 |
 | Qwen-Image-Edit | MM-DiT (I2I concat) | Qwen2.5-VL |
 | SD3.5 Medium | MM-DiT | CLIP-L + CLIP-G + T5 |
+| Boogu-Image | Double/single-stream DiT | Qwen3-VL |
 | Wan2.2-TI2V-5B | Wan DiT | T5 |
 | LTX-2.3 | LTX-2 DiT | LTX text encoder |
 | MiniMax-H3 | MiniMax H3 transformer | H3 text encoder |
