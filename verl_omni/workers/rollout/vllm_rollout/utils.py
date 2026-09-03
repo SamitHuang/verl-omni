@@ -16,7 +16,7 @@ import os
 import time
 
 import torch
-from verl.utils.device import get_visible_devices_keyword
+from verl.utils.device import get_torch_device, get_visible_devices_keyword
 from verl.workers.rollout.vllm_rollout.utils import VLLM_LORA_INT_ID, VLLM_LORA_NAME, VLLM_LORA_PATH, set_death_signal
 from vllm_omni.diffusion.worker.diffusion_worker import CustomPipelineWorkerExtension
 
@@ -245,14 +245,17 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
         """
         if not self._is_diffusion_pipeline_worker():
             return
-        try:
-            torch.cuda.ipc_collect()
-        except Exception:
-            pass
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+        device = get_torch_device()
+        ipc_collect = getattr(device, "ipc_collect", None)
+        if ipc_collect is not None:
+            try:
+                ipc_collect()
+            except Exception:
+                pass
+        if device.is_available():
+            device.synchronize()
+            device.empty_cache()
+            device.synchronize()
 
     def sleep(self, level: int = 1):
         self._idle_gpu_before_cumem_sleep()
