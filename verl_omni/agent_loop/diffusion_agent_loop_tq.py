@@ -131,7 +131,9 @@ class DiffusionAgentLoopWorkerTQ(DiffusionAgentLoopWorker):
         """Spawn ``rollout.n`` sessions per prompt and write trajectories to TQ."""
         uid = prompt["uid"]
         partition_id = "val" if trajectory["validate"] else "train"
-        await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "running"})
+        status_task = asyncio.create_task(
+            tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "running"})
+        )
         tasks = []
         try:
             config = self.rollout_config
@@ -151,6 +153,10 @@ class DiffusionAgentLoopWorkerTQ(DiffusionAgentLoopWorker):
                 tasks.append(task)
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await status_task
+            except Exception as e:
+                logger.warning(f"Error updating running status for uid={uid}: {e}")
             errors = [result for result in results if isinstance(result, BaseException)]
             for error in errors:
                 logger.error(
@@ -163,6 +169,10 @@ class DiffusionAgentLoopWorkerTQ(DiffusionAgentLoopWorker):
             logger.exception(f"Error in _run_prompt for uid={uid}: {e}")
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+            try:
+                await status_task
+            except Exception:
+                pass
             await tq.async_kv_put(key=uid, partition_id=partition_id, tag={"status": "failure"})
 
     async def _run_agent_loop(

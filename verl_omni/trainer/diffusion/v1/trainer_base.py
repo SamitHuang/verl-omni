@@ -286,6 +286,7 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         combined_keys: list = []
         combined_tags: list = []
         combined_partition_id = "train"
+        self._step_data_list = []
         for trigger_idx in range(self.parameter_sync_step):
             self.local_trigger_step = trigger_idx
             iter_metrics: dict = {}
@@ -395,6 +396,11 @@ class PolicyGradientDiffusionTrainerV1(ABC):
             data_for_tq,
             fields=["old_log_probs", "advantages", "returns", "sample_level_scores", "sample_level_rewards"],
         )
+        # Store computed DataProto reference so _compute_metrics does not have to
+        # re-fetch the entire batch (images, latents, etc.) from TransferQueue IPC.
+        if hasattr(self, "_step_data_list"):
+            self._step_data_list.append(data)
+
         return batch_meta
 
     def on_init_end(self):
@@ -1308,7 +1314,12 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         return metric_dict
 
     def _compute_metrics(self, batch_meta: KVBatchMeta, metrics, timing_raw, global_steps, epoch):
-        data = diffusion_tq_batch_to_dataproto(batch_meta, pad_token_id=self.tokenizer.pad_token_id or 0)
+        step_data = getattr(self, "_step_data_list", None)
+        if step_data:
+            data = step_data[0] if len(step_data) == 1 else DataProto.concat(step_data)
+            self._step_data_list = []
+        else:
+            data = diffusion_tq_batch_to_dataproto(batch_meta, pad_token_id=self.tokenizer.pad_token_id or 0)
         metrics.update({"training/global_step": global_steps, "training/epoch": epoch})
         metrics.update(compute_data_metrics_diffusion(batch=data))
         n_gpus = self.resource_pool_manager.get_n_gpus()

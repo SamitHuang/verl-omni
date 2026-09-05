@@ -254,16 +254,10 @@ class vLLMOmniColocateWorkerExtension(CustomPipelineWorkerExtension):
                 pass
         if device.is_available():
             device.synchronize()
-            device.empty_cache()
-            device.synchronize()
 
     def sleep(self, level: int = 1):
         self._idle_gpu_before_cumem_sleep()
         return super().sleep(level)
-
-    def handle_sleep_task(self, task):
-        self._idle_gpu_before_cumem_sleep()
-        return super().handle_sleep_task(task)
 
     def _get_zmq_handle(self) -> str:
         """Get the ZMQ handle matching the co-located trainer actor on this rank.
