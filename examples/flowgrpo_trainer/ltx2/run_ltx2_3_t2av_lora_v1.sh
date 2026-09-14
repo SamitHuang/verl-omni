@@ -104,7 +104,7 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     actor_rollout_ref.actor.optim.override_optimizer_config="{eps: 1e-8}" \
     actor_rollout_ref.actor.optim.clip_grad=1.0 \
     actor_rollout_ref.actor.ppo_mini_batch_size=16 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
     actor_rollout_ref.actor.diffusion_loss.clip_ratio=1e-4 \
     actor_rollout_ref.actor.diffusion_loss.adv_clip_max=5.0 \
     actor_rollout_ref.actor.use_kl_loss=False \
@@ -121,7 +121,7 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     actor_rollout_ref.rollout.agent.default_agent_loop=ltx2_diffusion_single_turn_agent \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.rollout.pipeline.height=256 \
     actor_rollout_ref.rollout.pipeline.width=384 \
     actor_rollout_ref.rollout.pipeline.num_frames=81 \
@@ -145,7 +145,7 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     actor_rollout_ref.rollout.val_kwargs.pipeline.guidance_scale=4.0 \
     +actor_rollout_ref.rollout.val_kwargs.pipeline.output_type=pt \
     actor_rollout_ref.rollout.val_kwargs.algo.noise_level=0.0 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=16 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
     reward.num_workers=1 \
     reward.reward_model.enable=False \
     reward.custom_reward_function.path=pkg://verl_omni.reward_loop.reward_manager.multi \
