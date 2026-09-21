@@ -35,11 +35,11 @@ async def _run_server_capture(monkeypatch, engine_args):
     """Drive ``run_server`` with stubbed plumbing; return the AsyncOmni kwargs."""
     server = object.__new__(server_module.vLLMOmniHttpServer)
     server._generate_strategy = MagicMock()
-    server.config = SimpleNamespace()
+    server.config = SimpleNamespace(disable_log_stats=True)
     server._server_address = ("127.0.0.1", 0)
 
     monkeypatch.setattr(server_module.OmniEngineArgs, "from_cli_args", classmethod(lambda cls, _: engine_args))
-    monkeypatch.setattr(server_module, "get_free_port", lambda *a, **k: (12345, SimpleNamespace(close=lambda: None)))
+    monkeypatch.setattr(server_module, "get_non_ephemeral_free_port", lambda *a, **k: 12345)
     # run_server sets MASTER_ADDR/MASTER_PORT; write them to a scratch copy.
     monkeypatch.setattr(os, "environ", dict(os.environ))
 
