@@ -1,61 +1,73 @@
-# Qwen-Image lora RL with Flow-DPPO (https://arxiv.org/abs/2606.11025), vllm_omni rollout
+#!/usr/bin/env bash
+# Qwen-Image DiffusionNFT LoRA RL, V1 sync trainer and vllm_omni rollout.
+# Keep the V0 NFT adapters, loss, and old-policy schedule for comparison.
 set -x
 
 # Set WORKSPACE to any writable directory; defaults to $HOME
 WORKSPACE=${WORKSPACE:-$HOME}
 
-ocr_train_path=$WORKSPACE/data/ocr/qwen_image/train.parquet
-ocr_test_path=$WORKSPACE/data/ocr/qwen_image/test.parquet
+ocr_train_path=$WORKSPACE/data/ocr/train.parquet
+ocr_test_path=$WORKSPACE/data/ocr/test.parquet
 
-model_name=${MODEL_PATH:-Qwen/Qwen-Image}
-reward_model_name=${REWARD_MODEL_PATH:-Qwen/Qwen3-VL-8B-Instruct}
+model_name=Qwen/Qwen-Image
+reward_model_name=Qwen/Qwen3-VL-8B-Instruct
 reward_function_path=verl_omni/utils/reward_score/genrm_ocr.py
 
 NUM_GPUS_ACTOR_ROLLOUT_REWARD=4
 ROLLOUT_TP=1
 REWARD_TP=4
+IMAGE_RESOLUTION=512
 
 ENGINE=vllm_omni
 REWARD_ENGINE=vllm
 
 
-python3 -m verl_omni.trainer.main_diffusion \
-    trainer.use_v1=false \
-    algorithm.adv_estimator=flow_grpo \
+python3 -m verl_omni.trainer.main_diffusion_v1 \
     data.train_files=$ocr_train_path \
     data.val_files=$ocr_test_path \
-    data.train_batch_size=32 \
+    data.train_max_samples=7200 \
+    data.train_batch_size=24 \
     data.max_prompt_length=256 \
+    actor_rollout_ref.model.algorithm=diffusion_nft \
+    actor_rollout_ref.model.model_type=diffusion_nft_model \
     actor_rollout_ref.model.path=$model_name \
     actor_rollout_ref.model.lora_rank=64 \
     actor_rollout_ref.model.lora_alpha=128 \
+    actor_rollout_ref.model.policy_state_adapters='["default","old"]' \
     actor_rollout_ref.model.target_modules="['to_q','to_k','to_v','to_out.0','add_q_proj','add_k_proj','add_v_proj','to_add_out','img_mlp.net.0.proj','img_mlp.net.2','txt_mlp.net.0.proj','txt_mlp.net.2']" \
     actor_rollout_ref.actor.optim.lr=3e-4 \
     actor_rollout_ref.actor.optim.weight_decay=0.0001 \
-    actor_rollout_ref.actor.ppo_mini_batch_size=16 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.actor.diffusion_loss.loss_mode=flow_dppo \
-    actor_rollout_ref.actor.diffusion_loss.kl_mask_threshold=1e-5 \
-    actor_rollout_ref.actor.diffusion_loss.add_kl_coefficient=True \
+    actor_rollout_ref.actor.ppo_mini_batch_size=12 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=12 \
+    actor_rollout_ref.actor.diffusion_loss.loss_mode=diffusion_nft \
+    actor_rollout_ref.actor.diffusion_loss.clip_ratio=1e-5 \
+    actor_rollout_ref.actor.diffusion_loss.mix_beta=0.1 \
+    actor_rollout_ref.actor.diffusion_loss.ref_kl_coef=0.0001 \
+    actor_rollout_ref.actor.diffusion_loss.adv_clip_max=5.0 \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.actor.fsdp_config.model_dtype=bfloat16 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$ROLLOUT_TP \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.n=16 \
     actor_rollout_ref.rollout.agent.num_workers=$((NUM_GPUS_ACTOR_ROLLOUT_REWARD / ROLLOUT_TP)) \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.rollout.layered_summon=True \
-    actor_rollout_ref.rollout.pipeline.true_cfg_scale=4.0 \
+    actor_rollout_ref.rollout.calculate_log_probs=False \
+    actor_rollout_ref.rollout.rollout_adapter=old \
+    actor_rollout_ref.rollout.pipeline.num_inference_steps=10 \
+    actor_rollout_ref.rollout.pipeline.true_cfg_scale=1.0 \
+    actor_rollout_ref.rollout.pipeline.height=$IMAGE_RESOLUTION \
+    actor_rollout_ref.rollout.pipeline.width=$IMAGE_RESOLUTION \
     actor_rollout_ref.rollout.pipeline.max_sequence_length=256 \
-    actor_rollout_ref.rollout.algo.noise_level=1.2 \
-    actor_rollout_ref.rollout.algo.sde_type="sde" \
-    actor_rollout_ref.rollout.algo.sde_window_size=2 \
-    actor_rollout_ref.rollout.algo.sde_window_range="[0,5]" \
-    actor_rollout_ref.rollout.val_kwargs.pipeline.num_inference_steps=50 \
-    actor_rollout_ref.rollout.val_kwargs.algo.noise_level=0.0 \
+    actor_rollout_ref.rollout.val_kwargs.pipeline.num_inference_steps=40 \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=32 \
+    algorithm.trainer_type=direct_preference \
+    algorithm.sample_source=online \
+    algorithm.timestep_fraction=1.0 \
+    algorithm.old_policy_decay_schedule=delayed_linear_to_0_999 \
+    algorithm.old_policy_update_interval=2 \
+    algorithm.adv_mode=continuous \
     reward.num_workers=$((NUM_GPUS_ACTOR_ROLLOUT_REWARD / REWARD_TP)) \
     reward.reward_model.enable=True \
     reward.reward_model.model_path=$reward_model_name \
@@ -64,13 +76,15 @@ python3 -m verl_omni.trainer.main_diffusion \
     reward.custom_reward_function.path=$reward_function_path \
     reward.custom_reward_function.name=compute_score_ocr \
     trainer.logger='["console", "wandb"]' \
-    trainer.project_name=flow_dppo \
-    trainer.experiment_name=qwen_image_ocr_lora \
+    trainer.project_name=diffusion_nft \
+    trainer.experiment_name=qwen_image_ocr_lora_v1 \
     trainer.log_val_generations=8 \
     trainer.val_before_train=False \
     trainer.n_gpus_per_node=$NUM_GPUS_ACTOR_ROLLOUT_REWARD \
     trainer.nnodes=1 \
-    trainer.save_freq=30 \
-    trainer.test_freq=30 \
-    trainer.total_epochs=15 \
-    trainer.total_training_steps=300 "$@"
+    trainer.save_freq=60 \
+    trainer.test_freq=20 \
+    trainer.total_epochs=1 \
+    trainer.total_training_steps=300 \
+    trainer.use_v1=true \
+    trainer.v1.trainer_mode=sync "$@"
