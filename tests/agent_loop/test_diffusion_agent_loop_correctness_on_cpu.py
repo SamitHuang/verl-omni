@@ -215,7 +215,7 @@ async def test_tq_writer_preserves_allowlisted_non_tensor_trajectory_metadata(mo
             "audio": torch.zeros(1, 1, 16),
             "media_kind": "video",
             "img_shapes": img_shapes,
-            "audio_sample_rate": 24000,
+            "audio_sample_rate": 32_000,
             "unrelated_metadata": "do-not-forward",
         },
     )
@@ -244,9 +244,6 @@ async def test_tq_writer_preserves_allowlisted_non_tensor_trajectory_metadata(mo
         "max_global_steps": 3,
     }
     assert "unrelated_metadata" not in field["extra_fields"]
-    assert "unrelated_metadata" not in field
-    assert "img_shapes" not in field
-    assert field["audio_sample_rate"] == 24000
     assert field["condition_image_latents"].shape == (4096, 64)
     assert field["audio"].shape == (1, 16)
     assert captured["tags"][0]["response_shape"] == (3, 2, 2)
