@@ -141,10 +141,14 @@ Visit our [documentation](https://verl-omni.readthedocs.io/en/latest/index.html)
     <td>✅</td>
   </tr>
   <tr>
-    <td><b>Boogu-Image</b></td>
-    <td>Diffusion generator</td>
-    <td>Text/Image → Image</td>
+    <td rowspan="2"><b>Boogu-Image</b></td>
+    <td rowspan="2">Diffusion generator</td>
+    <td rowspan="2">Text/Image → Image</td>
     <td>FlowGRPO (+ CPS/SDE)</td>
+    <td>✅</td>
+  </tr>
+  <tr>
+    <td>DiffusionNFT</td>
     <td>✅</td>
   </tr>
   <tr>
@@ -253,12 +257,3 @@ If you find the project helpful, please cite and star ⭐
 }
 ```
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=verl-project%2Fverl-omni&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=verl-project/verl-omni&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=verl-project/verl-omni&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=verl-project/verl-omni&type=date&legend=top-left" />
- </picture>
-</a>

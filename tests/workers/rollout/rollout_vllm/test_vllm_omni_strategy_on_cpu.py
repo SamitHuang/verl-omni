@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,6 +26,7 @@ from verl_omni.pipelines.model_base import OmniRolloutPipelineBase
 from verl_omni.pipelines.qwen3_omni.omni_rollout_adapter import Qwen3OmniRolloutAdapter
 from verl_omni.pipelines.rollout_media import DiffusionIOSpec, MediaSpec
 from verl_omni.pipelines.rollout_request import OmniRolloutRequest
+from verl_omni.workers.config import DiffusionRolloutConfig
 from verl_omni.workers.rollout.vllm_rollout import vllm_omni_ar_strategy as ar_strategy_module
 from verl_omni.workers.rollout.vllm_rollout import vllm_omni_async_server as server_module
 from verl_omni.workers.rollout.vllm_rollout import vllm_omni_diffusion_strategy as diffusion_strategy_module
@@ -723,7 +725,7 @@ def test_diffusion_strategy_preserves_engine_argument_preparation(monkeypatch):
         staticmethod(lambda **kwargs: pipeline_cls),
     )
     server = SimpleNamespace(
-        config=SimpleNamespace(
+        config=DiffusionRolloutConfig(
             external_lib=["extension"],
             tensor_model_parallel_size=4,
             text_encoder_tp_size=1,
@@ -751,8 +753,18 @@ def test_diffusion_strategy_preserves_engine_argument_preparation(monkeypatch):
         "max_num_seqs": 1,
         # text_encoder_tp_size is diffusion-owned so it survives the ingress
         # allowlist; enable_dummy_pipeline is rejected upstream and dropped.
+        "tensor_parallel_size": 4,
+        "ulysses_degree": 1,
+        "ring_degree": 1,
+        "sequence_parallel_size": 1,
+        "data_parallel_size": 1,
+        "pipeline_parallel_size": 1,
+        "vae_patch_parallel_size": 1,
+        "vae_parallel_mode": "tile",
+        "vae_use_tiling": False,
         "text_encoder_tp_size": 1,
         "custom_pipeline_args": {"pipeline_class": "package.Adapter"},
+        "enable_prefix_caching": False,
         "enable_prompt_embed_cache": True,
         "prompt_embed_cache_size": 16,
         "dtype": "bfloat16",
@@ -814,13 +826,14 @@ def test_diffusion_strategy_selects_paged_kv_mode_with_prefix_caching(monkeypatc
         staticmethod(lambda **kwargs: None),
     )
     server = SimpleNamespace(
-        config=SimpleNamespace(
+        config=DiffusionRolloutConfig(
             external_lib=[],
             tensor_model_parallel_size=1,
             text_encoder_tp_size=1,
             enable_prefix_caching=True,
+            enable_sleep_mode=False,
             enable_prompt_embed_cache=False,
-            prompt_embed_cache_size=0,
+            prompt_embed_cache_size=16,
         ),
         model_config=SimpleNamespace(architecture="Architecture", algorithm="Algorithm"),
     )
@@ -831,16 +844,19 @@ def test_diffusion_strategy_selects_paged_kv_mode_with_prefix_caching(monkeypatc
     assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
     assert engine_args["diffusion_kv_max_rows_per_request"] == 1
 
-    server.config.enable_prefix_caching = False
+    server.config = dataclasses.replace(server.config, enable_prefix_caching=False)
     engine_args: dict = {}
     strategy.prepare_engine_args(engine_args, Namespace())
     # Prefix caching off: leave the mode unset so upstream uses its default.
     assert "diffusion_kv_mode" not in engine_args
 
-    server.config.enable_prefix_caching = True
-    server.config.enable_prompt_embed_cache = True
-    server.config.prompt_embed_cache_size = 8
-    server.config.pipeline = SimpleNamespace(guidance_scale=7.5)
+    server.config = dataclasses.replace(
+        server.config,
+        enable_prefix_caching=True,
+        enable_prompt_embed_cache=True,
+        prompt_embed_cache_size=8,
+    )
+    server.model_config.pipeline = SimpleNamespace(guidance_scale=7.5)
     engine_args: dict = {}
     strategy.prepare_engine_args(engine_args, Namespace())
     assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
@@ -1059,8 +1075,9 @@ def test_drop_defaulted_engine_args_keeps_only_explicit_overrides():
 def test_ar_deploy_config_omits_text_encoder_tp_size_on_ar_stages(tmp_path, monkeypatch):
     """text_encoder_tp_size is diffusion-only; upstream rejects it on AR stages."""
     import yaml
-    from verl_omni.pipelines.model_base import OmniRolloutPipelineBase
     from vllm_omni.config.stage_config import StageExecutionType
+
+    from verl_omni.pipelines.model_base import OmniRolloutPipelineBase
 
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
 
