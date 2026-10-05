@@ -360,7 +360,7 @@ class MiniMaxH3PipelineWithLogProb(MiniMaxH3WeightSyncMixin, MiniMaxH3Pipeline):
         audio_scheduler = FlowMatchSDEDiscreteScheduler()
         configure_flow_scheduler(video_scheduler, video_sigmas, self.device)
         configure_flow_scheduler(audio_scheduler, audio_sigmas, self.device)
-        num_transitions = num_steps - 1
+        num_transitions = len(video_sigmas) - 1
         if self._flow_grpo_window_size is None:
             selected = set(range(num_transitions))
         else:

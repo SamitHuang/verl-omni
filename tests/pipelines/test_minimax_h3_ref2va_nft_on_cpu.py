@@ -107,34 +107,26 @@ def test_reference_row_minibatch_padding_rejects_count_mismatch():
 
 def test_reference_image_short_edge_environment_override_is_restored(monkeypatch):
     import vllm_omni.model_executor.models.minimax_h3.preprocessing as h3_preprocessing
-    from vllm_omni.model_executor.models.minimax_h3.preprocessing import (
-        resolve_minimax_h3_reference_image_shape,
-    )
 
-    constant = "MINIMAX_H3_REFERENCE_IMAGE_SHORT_EDGE"
-    monkeypatch.setitem(vars(h3_preprocessing), constant, 2048)
     monkeypatch.setenv("REF_IMAGE_SHORT_EDGE", "1024")
     image = Image.new("RGB", (640, 400))
 
     with ref2va_reference_image_short_edge() as short_edge:
         assert short_edge == 1024
-        assert min(resolve_minimax_h3_reference_image_shape(image)) == 1024
-    assert min(resolve_minimax_h3_reference_image_shape(image)) == 2048
+        assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 1024
+    assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 384
 
 
 def test_request_short_edge_overrides_environment_temporarily(monkeypatch):
     import vllm_omni.model_executor.models.minimax_h3.preprocessing as h3_preprocessing
     from vllm_omni.diffusion.models.minimax_h3.pipeline_minimax_h3 import MiniMaxH3Pipeline
-    from vllm_omni.model_executor.models.minimax_h3.preprocessing import (
-        resolve_minimax_h3_reference_image_shape,
-    )
 
-    constant = "MINIMAX_H3_REFERENCE_IMAGE_SHORT_EDGE"
-    monkeypatch.setitem(vars(h3_preprocessing), constant, 2048)
     monkeypatch.setenv("REF_IMAGE_SHORT_EDGE", "512")
     image = Image.new("RGB", (640, 400))
     monkeypatch.setattr(
-        MiniMaxH3Pipeline, "forward", lambda _self, _request: min(resolve_minimax_h3_reference_image_shape(image))
+        MiniMaxH3Pipeline,
+        "forward",
+        lambda _self, _request: min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)),
     )
     pipeline = object.__new__(MiniMaxH3DiffusionNFTPipeline)
     object.__setattr__(pipeline, "_ensure_prompt_text", MagicMock())
@@ -147,17 +139,12 @@ def test_request_short_edge_overrides_environment_temporarily(monkeypatch):
     )
 
     assert pipeline.forward(request) == 1024
-    assert min(resolve_minimax_h3_reference_image_shape(image)) == 2048
+    assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 384
 
 
 def test_reference_image_short_edge_serializes_concurrent_overrides(monkeypatch):
     import vllm_omni.model_executor.models.minimax_h3.preprocessing as h3_preprocessing
-    from vllm_omni.model_executor.models.minimax_h3.preprocessing import (
-        resolve_minimax_h3_reference_image_shape,
-    )
 
-    constant = "MINIMAX_H3_REFERENCE_IMAGE_SHORT_EDGE"
-    monkeypatch.setitem(vars(h3_preprocessing), constant, 2048)
     image = Image.new("RGB", (640, 400))
     first_entered = Event()
     release_first = Event()
@@ -169,13 +156,13 @@ def test_reference_image_short_edge_serializes_concurrent_overrides(monkeypatch)
         with ref2va_reference_image_short_edge(512):
             first_entered.set()
             release_first.wait(timeout=2)
-            results.append(min(resolve_minimax_h3_reference_image_shape(image)))
+            results.append(min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)))
 
     def second_request():
         second_started.set()
         with ref2va_reference_image_short_edge(1024):
             second_entered.set()
-            results.append(min(resolve_minimax_h3_reference_image_shape(image)))
+            results.append(min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)))
 
     first = Thread(target=first_request)
     second = Thread(target=second_request)
@@ -191,7 +178,7 @@ def test_reference_image_short_edge_serializes_concurrent_overrides(monkeypatch)
     second.join(timeout=2)
 
     assert results == [512, 1024]
-    assert min(resolve_minimax_h3_reference_image_shape(image)) == 2048
+    assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 384
 
 
 @pytest.mark.parametrize("value", ["invalid", "255", "1000", "2049"])

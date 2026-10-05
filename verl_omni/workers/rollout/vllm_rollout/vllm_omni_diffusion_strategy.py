@@ -267,13 +267,39 @@ class DiffusionStrategy(OmniStrategyBase):
         # pages without invalidating cached prefixes). Sleep mode frees the
         # rollout weights so the actor can train on the same GPUs, so when
         # sleep is enabled it wins and prefix caching is switched off.
+        #
+        # Upstream only supports paged_scheduler for HunyuanImage-3.0 in request
+        # mode (step_execution=False) with FLASH_ATTN. For all other diffusion
+        # architectures, paged KV is not integrated, so dense_legacy is kept
+        # and prefix caching is disabled.
         sleep_enabled = getattr(self.server.config, "enable_sleep_mode", False)
         prefix_caching = bool(getattr(self.server.config, "enable_prefix_caching", False))
         if prefix_caching and sleep_enabled:
             prefix_caching = False
             engine_args["enable_prefix_caching"] = False
+
+        arch = str(getattr(self.server.model_config, "architecture", "") or "")
+        model_name = str(getattr(self.server.model_config, "model", "") or "")
+        model_path = str(getattr(self.server.model_config, "model_path", "") or "")
+        step_exec = bool(getattr(self.server.config, "step_execution", False))
+        attn_backend = getattr(self.server.config, "rollout_attn_backend", None)
+        is_hunyuan = any("hunyuan" in s.lower() for s in (arch, model_name, model_path))
+        is_flash_attn = attn_backend is None or str(attn_backend).upper() in ("FLASH_ATTN", "FLASHATTN")
+        supports_paged_kv = is_hunyuan and not step_exec and is_flash_attn
+
         if prefix_caching:
-            engine_args.setdefault("diffusion_kv_mode", "paged_scheduler")
+            if supports_paged_kv:
+                engine_args.setdefault("diffusion_kv_mode", "paged_scheduler")
+            else:
+                logger.info(
+                    "Diffusion prefix caching requires HunyuanImage-3.0 in request mode with FLASH_ATTN; "
+                    "disabling prefix caching for %s (step_execution=%s, backend=%s).",
+                    arch or model_name or "current pipeline",
+                    step_exec,
+                    attn_backend,
+                )
+                engine_args["enable_prefix_caching"] = False
+
         if engine_args.get("diffusion_kv_mode") == "paged_scheduler":
             pipeline_cfg = getattr(self.server.config, "pipeline", None)
             if getattr(pipeline_cfg, "guidance_scale", None) is None:

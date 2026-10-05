@@ -251,19 +251,34 @@ def ref2va_reference_image_short_edge(value: int | str | None = None) -> Iterato
     """Temporarily apply the Ref2VA image size while serializing concurrent requests."""
     short_edge = validate_ref2va_reference_image_short_edge(value)
 
+    import vllm_omni.model_executor.models.minimax_h3.encoder_processing as _h3_encoder_processing
     from vllm_omni.model_executor.models.minimax_h3 import preprocessing as _h3_preprocessing
 
-    resize_globals = vars(_h3_preprocessing)
-    constant = "MINIMAX_H3_REFERENCE_IMAGE_SHORT_EDGE"
-    if constant not in resize_globals:
-        raise RuntimeError("vLLM-Omni no longer exposes the MiniMax H3 reference image size constant.")
+    def _scaled_shape(image: Any) -> tuple[int, int]:
+        width, height = image.size
+        ratio = width / height
+        if not 0.4 <= ratio <= 2.5:
+            raise _h3_preprocessing.OmniClientError(
+                f"reference image aspect ratio must be in [0.4, 2.5], got {width}x{height}"
+            )
+        scale = short_edge / min(width, height)
+        return (
+            _h3_preprocessing._align_multiple(width * scale, _h3_preprocessing.MINIMAX_H3_REFERENCE_IMAGE_MULTIPLE),
+            _h3_preprocessing._align_multiple(height * scale, _h3_preprocessing.MINIMAX_H3_REFERENCE_IMAGE_MULTIPLE),
+        )
+
     with _REF_IMAGE_SHAPE_LOCK:
-        original = resize_globals[constant]
-        resize_globals[constant] = short_edge
+        orig_fn = _h3_preprocessing.resolve_minimax_h3_reference_image_shape
+        orig_enc_fn = getattr(_h3_encoder_processing, "resolve_minimax_h3_reference_image_shape", None)
+        _h3_preprocessing.resolve_minimax_h3_reference_image_shape = _scaled_shape
+        if orig_enc_fn is not None:
+            _h3_encoder_processing.resolve_minimax_h3_reference_image_shape = _scaled_shape
         try:
             yield short_edge
         finally:
-            resize_globals[constant] = original
+            _h3_preprocessing.resolve_minimax_h3_reference_image_shape = orig_fn
+            if orig_enc_fn is not None:
+                _h3_encoder_processing.resolve_minimax_h3_reference_image_shape = orig_enc_fn
 
 
 def messages_to_text(messages: Any) -> str:

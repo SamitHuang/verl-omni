@@ -101,18 +101,65 @@ class MiniMaxH3WeightSyncMixin:
             return "transformers_ref"
         return "transformer"
 
-    def encode_prompt(self, *, task: str, prompt: str, **kwargs):
-        """Let upstream encode references while preserving Agent Loop prompt IDs."""
-        prompt_ids = getattr(self, "_h3_prompt_ids", None)
-        if prompt_ids is None:
-            return super().encode_prompt(task=task, prompt=prompt, **kwargs)
+    def encode_prompt(self, prepared):
+        """Encode Agent Loop IDs while letting vLLM-Omni build reference vision spans.
 
-        tokenizer = self.tokenizer
-        self.tokenizer = _PromptTokenOverride(tokenizer, prompt, prompt_ids)
-        try:
-            return super().encode_prompt(task=task, prompt=prompt, **kwargs)
-        finally:
-            self.tokenizer = tokenizer
+        Newer vllm-omni passes a single ``PreparedEncoderInputs`` (prompt text +
+        media + condition labels) instead of ``(task, prompt, image, images)``.
+        """
+        prompt_ids = getattr(self, "_h3_prompt_ids", None)
+        media = getattr(prepared, "media", None) if prepared is not None else None
+        task = getattr(media, "task", None)
+        if prompt_ids is None or prepared is None or task not in {"t2va", "fl2va", "ref2va"}:
+            return super().encode_prompt(prepared)
+
+        if task == "ref2va":
+            # Let the upstream pipeline build every reference span; the override keeps the Agent Loop text token IDs.
+            tokenizer = self.tokenizer
+            self.tokenizer = _PromptTokenOverride(tokenizer, prepared.prompt, prompt_ids)
+            try:
+                return super().encode_prompt(prepared)
+            finally:
+                self.tokenizer = tokenizer
+
+        from vllm_omni.diffusion.models.minimax_h3.pipeline_minimax_h3 import _broadcast_tensor, _dit_rank_world
+        from vllm_omni.model_executor.models.minimax_h3.preprocessing import (
+            minimax_h3_multi_image_presentation,
+        )
+
+        _, rank, _ = _dit_rank_world()
+        hidden = None
+        tags = None
+        ids = None
+        vision_kwargs: dict[str, torch.Tensor] = {}
+        condition_images = list(getattr(prepared, "images", None) or [])
+        if rank == 0:
+            if task == "t2va":
+                ids = prompt_ids
+                tags = torch.ones(ids.shape[0], dtype=torch.long)
+            else:
+                if not condition_images:
+                    raise ValueError(f"MiniMax H3 {task} requires at least one condition image.")
+                vision = self.processor.image_processor(images=condition_images, return_tensors="pt")
+                image_grid = vision["image_grid_thw"]
+                merge = int(self.processor.image_processor.merge_size) ** 2
+                image_token_counts = [int(grid.prod().item()) // merge for grid in image_grid]
+                prefix_ids, prefix_tags = minimax_h3_multi_image_presentation(
+                    self.tokenizer, prompt="", image_token_counts=image_token_counts
+                )
+                ids = torch.cat([prefix_ids, prompt_ids])
+                tags = torch.cat([prefix_tags, torch.ones(prompt_ids.shape[0], dtype=torch.long)])
+                vision_kwargs = {
+                    "pixel_values": vision["pixel_values"],
+                    "image_grid_thw": image_grid,
+                }
+
+        if rank < self.text_encoder_tp_size:
+            ids = self._distribute_encode_inputs(ids, vision_kwargs)
+            hidden = self._encode_text_hidden(ids, vision_kwargs)
+        hidden = _broadcast_tensor(hidden, dtype=torch.bfloat16, device=self.device)
+        tags = _broadcast_tensor(tags, dtype=torch.long, device=self.device)
+        return hidden, tags
 
     def _ensure_prompt_text(self, request: Any) -> None:
         """Expose Agent Loop IDs while satisfying upstream's text check."""
