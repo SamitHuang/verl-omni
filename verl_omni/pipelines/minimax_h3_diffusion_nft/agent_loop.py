@@ -55,11 +55,11 @@ class MiniMaxH3DiffusionSingleTurnAgentLoop(DiffusionSingleTurnAgentLoop):
                     media["audios"].append(item["audio"])
         return {key: values for key, values in media.items() if values}
 
-    async def _tokenize_raw_text(self, messages: list[dict]) -> list[int]:
+    async def _tokenize_raw_text(self, messages: list[dict] | str) -> list[int]:
         """Return raw H3 text IDs without applying a chat template."""
         text = messages_to_text(messages)
         if not text:
-            raise ValueError("MiniMax H3 requires a non-empty text prompt.")
+            return []
         prompt_length = self.rollout_config.prompt_length
         tokenized = await self.loop.run_in_executor(
             None,

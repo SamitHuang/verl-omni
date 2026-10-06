@@ -292,12 +292,29 @@ class DiffusersFSDPEngine(LoRAAdapterMixin, BaseEngine, ABC):
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
-            module = AutoModel.from_pretrained(
-                self.model_config.config_path or self.model_config.local_path,
-                torch_dtype=torch_dtype,
-                trust_remote_code=self.model_config.trust_remote_code,
-                subfolder="" if self.model_config.config_path else self.model_config.transformer_subfolder,
-            )
+            load_path = self.model_config.config_path or self.model_config.local_path
+            subfolder = "" if self.model_config.config_path else self.model_config.transformer_subfolder
+            try:
+                module = AutoModel.from_pretrained(
+                    load_path,
+                    torch_dtype=torch_dtype,
+                    trust_remote_code=self.model_config.trust_remote_code,
+                    subfolder=subfolder,
+                )
+            except ValueError as e:
+                # If trust_remote_code was passed but the model repo does not define custom code
+                # in auto_map, diffusers AutoModel raises ValueError: "Selected model repository
+                # does not appear to have any custom code or does not have a valid config.json file."
+                # Retry with trust_remote_code=False.
+                if self.model_config.trust_remote_code and "does not appear to have any custom code" in str(e):
+                    module = AutoModel.from_pretrained(
+                        load_path,
+                        torch_dtype=torch_dtype,
+                        trust_remote_code=False,
+                        subfolder=subfolder,
+                    )
+                else:
+                    raise
             try:
                 module.set_attention_backend(self.model_config.attn_backend)
             except Exception as e:

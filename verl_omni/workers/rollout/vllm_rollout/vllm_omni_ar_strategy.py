@@ -194,10 +194,7 @@ class ARStrategy(OmniStrategyBase):
                     "stage_id": stage.stage_id,
                     "devices": devices,
                     "tensor_parallel_size": tp_size,
-                    # text_encoder_tp_size is a diffusion-parallel knob: the new
-                    # upstream rejects it on non-diffusion stages ("... has
-                    # explicit engine argument(s) with no structured config
-                    # owner"), so only emit it where a text encoder exists.
+                    # Only diffusion stages own text_encoder_tp_size.
                     **(
                         {"text_encoder_tp_size": text_encoder_tp_size}
                         if getattr(stage, "execution_type", None) == StageExecutionType.DIFFUSION

@@ -59,17 +59,7 @@ _ENGINE_ARGS_DEFAULTS: dict | None = None
 
 
 def _is_defaulted_value(key: str, value: Any, default: Any) -> bool:
-    """Check a single engine argument against its upstream default.
-
-    Beyond plain equality, two parser-level normalizations need handling:
-
-    - ``argparse`` applies ``type=json.loads`` to string defaults, so JSON
-      flags surface as ``{}`` (dict) while the dataclass default stays
-      ``"{}"`` (string). Compare through ``json.loads`` for string defaults.
-    - Some string flags default to ``""`` in the CLI while the dataclass
-      default is ``None`` (e.g. ``reasoning_parser_plugin``). An empty value
-      for an optional field carries no information and is dropped.
-    """
+    """Return True if *value* matches the upstream default for *key*."""
     if value == default:
         return True
     if default is None and value in ("", {}, []):
@@ -83,14 +73,7 @@ def _is_defaulted_value(key: str, value: Any, default: Any) -> bool:
 
 
 def _restore_raw_compilation_config(engine_args: dict, args: Any) -> None:
-    """Restore the raw user ``compilation_config`` mapping in place.
-
-    vLLM's ``EngineArgs.__post_init__`` expands a user ``dict`` into a live
-    ``CompilationConfig`` whose runtime fields (``traced_files``,
-    ``compilation_time``, ...) the new strict stage config rejects on
-    rebuild. The raw mapping validates cleanly (missing fields take vLLM
-    defaults), so it is what must travel to ``AsyncOmni``.
-    """
+    """Restore the raw user ``compilation_config`` dict to pass strict stage validation."""
     raw_compilation_config = getattr(args, "compilation_config", None)
     if raw_compilation_config is None:
         engine_args.pop("compilation_config", None)
@@ -101,22 +84,7 @@ def _restore_raw_compilation_config(engine_args: dict, args: Any) -> None:
 
 
 def _drop_defaulted_engine_args(engine_args: dict) -> dict:
-    """Keep only explicitly-set engine arguments.
-
-    vllm-omni (12e9280+) rejects top-level engine arguments that no stage of
-    the pipeline owns ("... has explicit engine argument(s) with no structured
-    config owner"). Upstream's own CLI only forwards explicitly-passed flags
-    (``TrackingNamespace.get_explicit_kwargs_dict``), while verl builds the
-    server namespace from the full rollout config, materializing hundreds of
-    defaults: ``OmniEngineArgs`` MEL defaults (diffusion-only knobs, private
-    runtime internals such as ``_api_process_count``) plus ``OrchestratorArgs``
-    parser defaults (``ulysses_mode="strict"``, ``cache_backend="none"``,
-    ``step_execution=False``, ... — the ownership check flags every non-None
-    value, including ``False``). Dropping every value that equals the upstream
-    default reproduces the explicit-only semantics: defaults apply on their
-    own, and only real overrides travel. ``model`` is always kept since it
-    identifies the deployment.
-    """
+    """Keep only explicitly-set engine arguments, dropping upstream defaults."""
     global _ENGINE_ARGS_DEFAULTS
     if _ENGINE_ARGS_DEFAULTS is None:
         defaults = asdict(OmniEngineArgs(model=""))
@@ -367,14 +335,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             self._invalidate_lora_request_cache()
         await super().set_global_steps(global_steps)
 
-    async def _reset_frontend_mm_cache(self) -> None:
-        """Clear the frontend multimodal cache; EngineCore.sleep wipes only the engine-side copy."""
-        # Diffusion-only engines build no InputProcessor, so renderer is None.
-        # TODO (mike): drop after vllm-omni fixes AsyncOmni.reset_mm_cache.
-        renderer = self.engine.renderer
-        if renderer is not None:
-            await renderer.clear_mm_cache_async()
-
     async def sleep(self):
         if self.node_rank != 0 or not self.config.free_cache_engine:
             return
@@ -384,7 +344,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         with RLInsightLogger.trace_state("vllm_sleep", state_lane_id=f"replica_{self.replica_rank}"):
             acks = await self.engine.sleep(level=self._resolve_sleep_level())
             self._validate_acks("sleep", acks)
-            await self._reset_frontend_mm_cache()
             self._invalidate_lora_request_cache()
 
     async def release_kv_cache(self):
@@ -402,7 +361,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         with RLInsightLogger.trace_state("vllm_release_kv_cache", state_lane_id=f"replica_{self.replica_rank}"):
             acks = await self.engine.sleep(level=self._resolve_sleep_level())
             self._validate_acks("sleep", acks)
-            await self._reset_frontend_mm_cache()
             self._invalidate_lora_request_cache()
             acks = await self.engine.wake_up(tags=["weights"])
             self._validate_acks("wake_up", acks)
@@ -521,84 +479,22 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             return await super().abort_all_requests(reset_prefix_cache)
 
         # ``engine.abort`` takes EXTERNAL ids; ``request_states`` is keyed by internal.
-        in_flight: list[tuple[str, str, Any]] = []
         seen: set[str] = set()
+        request_ids: list[str] = []
         for state in engine.request_states.values():
             if state.external_request_id in seen:
                 continue
             seen.add(state.external_request_id)
-            in_flight.append((state.request_id, state.external_request_id, state))
+            request_ids.append(state.external_request_id)
 
-        request_ids = [external_id for _, external_id, _ in in_flight]
-
-        aborted = False
-        try:
-            # TODO (mike): multi-stage AR abort is broken upstream — the engine's
-            # abort fallback terminal is stage_id=0 and the consume loop breaks on
-            # finished non-final messages, so generate() exits empty. Single-stage /
-            # thinker-only is correct here; needs a vllm-omni fix + pin bump.
-            await asyncio.wait_for(
-                engine.abort(request_ids), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
-            )
-            aborted = True
-            # Pause even with nothing to abort: holds admission until resume_generation.
-            await engine.pause_generation(
-                mode="abort", wait_for_inflight_requests=False, clear_cache=reset_prefix_cache
-            )
-        except Exception:
-            # Nothing engine-side enqueued terminals — synthesize them so
-            # generate() cannot hang on queue.get.
-            if not aborted:
-                for internal_id, _, state in in_flight:
-                    self._enqueue_abort_output(internal_id, state)
-            raise
-
-        if reset_prefix_cache:
-            # pause_generation(clear_cache=True) wiped the engine-side mm cache;
-            # drop the frontend copy too, or hash-only follow-ups finish empty.
-            # TODO (mike): drop after vllm-omni fixes AsyncOmni.reset_mm_cache.
-            await self._reset_frontend_mm_cache()
+        await asyncio.wait_for(
+            engine.abort(request_ids), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
+        )
+        # Pause even with nothing to abort: holds admission until resume_generation.
+        await engine.pause_generation(mode="abort", wait_for_inflight_requests=False, clear_cache=reset_prefix_cache)
 
         logger.info("Aborted %d request(s): %s", len(request_ids), request_ids)
         return {"aborted_count": len(request_ids), "request_ids": request_ids}
-
-    def _enqueue_abort_output(self, internal_id: str, req_state: Any) -> None:
-        """Synthesize a terminal abort OutputMessage and put it into a per-request queue.
-
-        ``_process_orchestrator_results`` reads from ``req_state.queue`` and
-        expects ``OutputMessage`` (or ``ErrorMessage``) objects. We build a
-        minimal ``OmniRequestOutput`` with ``finish_reason="abort"`` so that
-        ``_process_single_result`` yields it and the active generation strategy maps it
-        to ``stop_reason="aborted"``.
-        """
-        from vllm.outputs import CompletionOutput
-        from vllm_omni.engine.messages import OutputMessage
-        from vllm_omni.outputs import OmniRequestOutput
-
-        completion = CompletionOutput(
-            index=0,
-            text="",
-            token_ids=[],
-            cumulative_logprob=None,
-            logprobs=None,
-            finish_reason="abort",
-            stop_reason=None,
-        )
-        omni_output = OmniRequestOutput(
-            request_id=internal_id,
-            outputs=[completion],
-            finished=True,
-        )
-        # Use the final stage so _process_single_result's stage_meta.final_output
-        # check passes and the output is yielded (not silently dropped).
-        final_stage_id = max(0, getattr(self.engine, "num_stages", 1) - 1)
-        msg = OutputMessage(
-            request_id=internal_id,
-            stage_id=final_stage_id,
-            engine_outputs=omni_output,
-            finished=True,
-        )
-        req_state.queue.put_nowait(msg)
 
     async def abort_request(self, request_id: str, reset_prefix_cache: bool = True) -> dict[str, Any]:
         """Abort a single in-flight request on the AsyncOmni engine."""
@@ -606,20 +502,9 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         if getattr(engine, "output_processor", None) is not None:
             return await super().abort_request(request_id, reset_prefix_cache)
 
-        in_flight_state = None
-        for state in engine.request_states.values():
-            if state.external_request_id == request_id:
-                in_flight_state = state
-                break
-
-        try:
-            await asyncio.wait_for(
-                engine.abort(request_id), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
-            )
-        except Exception:
-            if in_flight_state is not None:
-                self._enqueue_abort_output(in_flight_state.request_id, in_flight_state)
-            raise
+        await asyncio.wait_for(
+            engine.abort(request_id), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
+        )
 
         logger.info("Aborted request: %s", request_id)
         return {"aborted": True, "request_id": request_id}

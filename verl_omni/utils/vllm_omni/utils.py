@@ -95,29 +95,14 @@ class VLLMOmniHijack:
                         lora_path=lora_path,
                         dtype=self.dtype,
                     )
-                if loaded is None:
+                if loaded is not None:
+                    lora_model, peft_helper = loaded
+                else:
                     peft_helper = PEFTHelper.from_local_dir(
                         lora_path,
                         max_position_embeddings=None,  # no need in diffusion
                         tensorizer_config_dict=lora_request.tensorizer_config_dict,
                     )
-                else:
-                    lora_model, peft_helper = loaded
-                    logger.info(
-                        "Loaded PEFT config: r=%d, lora_alpha=%d, target_modules=%s",
-                        peft_helper.r,
-                        peft_helper.lora_alpha,
-                        peft_helper.target_modules,
-                    )
-                    logger.info(
-                        "Loaded LoRA model: id=%d, num_modules=%d, modules=%s",
-                        lora_model.id,
-                        len(lora_model.loras),
-                        list(lora_model.loras.keys()),
-                    )
-                    for lora in lora_model.loras.values():
-                        lora.optimize()  # ref: _create_merged_loras_inplace, internal scaling
-                    return lora_model, peft_helper
 
             logger.info(
                 "Loaded PEFT config: r=%d, lora_alpha=%d, target_modules=%s",
@@ -126,28 +111,29 @@ class VLLMOmniHijack:
                 peft_helper.target_modules,
             )
 
-            if isinstance(lora_request, OmniTensorLoRARequest):
-                lora_model = LoRAModel.from_lora_tensors(
-                    tensors=lora_tensors,
-                    peft_helper=peft_helper,
-                    lora_model_id=lora_request.lora_int_id,
-                    device="cpu",  # consistent w/ vllm's behavior
-                    dtype=self.dtype,
-                    model_vocab_size=None,
-                    weights_mapper=None,
-                )
-            else:
-                lora_model = LoRAModel.from_local_checkpoint(
-                    lora_path,
-                    expected_lora_modules=self._expected_lora_modules,
-                    peft_helper=peft_helper,
-                    lora_model_id=lora_request.lora_int_id,
-                    device="cpu",  # consistent w/ vllm's behavior
-                    dtype=self.dtype,
-                    model_vocab_size=None,
-                    tensorizer_config_dict=lora_request.tensorizer_config_dict,
-                    weights_mapper=None,
-                )
+            if loaded is None:
+                if isinstance(lora_request, OmniTensorLoRARequest):
+                    lora_model = LoRAModel.from_lora_tensors(
+                        tensors=lora_tensors,
+                        peft_helper=peft_helper,
+                        lora_model_id=lora_request.lora_int_id,
+                        device="cpu",  # consistent w/ vllm's behavior
+                        dtype=self.dtype,
+                        model_vocab_size=None,
+                        weights_mapper=None,
+                    )
+                else:
+                    lora_model = LoRAModel.from_local_checkpoint(
+                        lora_path,
+                        expected_lora_modules=self._expected_lora_modules,
+                        peft_helper=peft_helper,
+                        lora_model_id=lora_request.lora_int_id,
+                        device="cpu",  # consistent w/ vllm's behavior
+                        dtype=self.dtype,
+                        model_vocab_size=None,
+                        tensorizer_config_dict=lora_request.tensorizer_config_dict,
+                        weights_mapper=None,
+                    )
 
             logger.info(
                 "Loaded LoRA model: id=%d, num_modules=%d, modules=%s",

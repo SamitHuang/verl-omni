@@ -67,23 +67,23 @@ def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     from vllm_omni.diffusion.data import OmniDiffusionConfig
     from vllm_omni.engine.arg_utils import orchestrator_field_names
 
-    diffusion_fields = frozenset(field.name for field in fields(OmniDiffusionConfig))
-    stage_consumed_fields = (
-        diffusion_fields
+    diffusion_config_fields = frozenset(field.name for field in fields(OmniDiffusionConfig))
+    stage_fields = (
+        diffusion_config_fields
         | _DIFFUSION_OWNED_STAGE_ENGINE_FIELDS
         | frozenset(_STAGE_DEPLOY_ENGINE_FIELDS)
         | frozenset(_PIPELINE_DEPLOY_CLI_FIELDS)
         | _DIFFUSION_STAGE_METADATA_FIELDS
         | _DIFFUSION_DEFAULT_FACTORY_FIELDS
-    ) - _DIFFUSION_SHARED_ONLY_ENGINE_FIELDS
-    externally_consumed_fields = (
+    )
+    infra_fields = (
         _DIFFUSION_SHARED_ONLY_ENGINE_FIELDS
         | _NON_STAGE_ENGINE_CLI_FIELDS
         | frozenset(field.name for field in fields(FrontendArgs))
-        | orchestrator_field_names()
         | frozenset(field.name for field in fields(cast(Any, VllmOmniOrchestratorConfig)))
+        | orchestrator_field_names()
     )
-    return stage_consumed_fields | externally_consumed_fields
+    return stage_fields | infra_fields
 
 
 def _diffusion_output_type(sampling_params: dict[str, Any]) -> str:
@@ -261,6 +261,12 @@ class DiffusionStrategy(OmniStrategyBase):
         engine_args["enable_prompt_embed_cache"] = self.server.config.enable_prompt_embed_cache
         engine_args["prompt_embed_cache_size"] = self.server.config.prompt_embed_cache_size
 
+        trust_remote_code = getattr(self.server.model_config, "trust_remote_code", False) or getattr(
+            self.server.config, "trust_remote_code", False
+        )
+        if trust_remote_code:
+            engine_args["trust_remote_code"] = True
+
         # vllm-omni (12e9280+) validates that enable_prefix_caching requires
         # diffusion_kv_mode='paged_scheduler' (OmniConfig), and separately that
         # prefix caching cannot be combined with sleep mode (sleep discards KV
@@ -283,9 +289,12 @@ class DiffusionStrategy(OmniStrategyBase):
         model_path = str(getattr(self.server.model_config, "model_path", "") or "")
         step_exec = bool(getattr(self.server.config, "step_execution", False))
         attn_backend = getattr(self.server.config, "rollout_attn_backend", None)
-        is_hunyuan = any("hunyuan" in s.lower() for s in (arch, model_name, model_path))
+        is_hunyuan_image3 = any(
+            any(k in s.lower() for k in ("hunyuan_image3", "hunyuan-image3", "hunyuanimage3", "hunyuan_image_3"))
+            for s in (arch, model_name, model_path)
+        )
         is_flash_attn = attn_backend is None or str(attn_backend).upper() in ("FLASH_ATTN", "FLASHATTN")
-        supports_paged_kv = is_hunyuan and not step_exec and is_flash_attn
+        supports_paged_kv = is_hunyuan_image3 and not step_exec and is_flash_attn
 
         if prefix_caching:
             if supports_paged_kv:
@@ -311,20 +320,13 @@ class DiffusionStrategy(OmniStrategyBase):
                 use_cfg = True
             engine_args.setdefault("diffusion_kv_max_rows_per_request", 2 if use_cfg else 1)
 
-        # Newer vllm-omni rejects unowned diffusion ingress fields, but the
-        # shared server forwards the full OmniEngineArgs namespace (including
-        # vLLM LLM-only fields like block_size that diffusion never consumed).
-        # Strip them here; keys added later in run_server (step_execution,
-        # seed, diffusion_attention_config) are all within the allowlist.
+        # Strip LLM-only fields from OmniEngineArgs before passing to diffusion ingress.
         allowed = _diffusion_ingress_allowed_fields()
         dropped = sorted(key for key in engine_args if key not in allowed)
         for key in dropped:
             del engine_args[key]
         if dropped:
-            logger.info(
-                "Dropping vLLM LLM-only engine args rejected by diffusion ingress: %s",
-                dropped,
-            )
+            logger.info("Dropping LLM-only engine args rejected by diffusion ingress: %s", dropped)
 
     def preprocess_input(
         self,
