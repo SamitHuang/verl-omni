@@ -206,7 +206,7 @@ class DiffusionRolloutConfig(BaseConfig):
 
     enable_chunked_prefill: bool = True
 
-    enable_prefix_caching: bool = True
+    enable_prefix_caching: bool = False
 
     load_format: str = "dummy"
 

@@ -321,6 +321,7 @@ class DiffusionStrategy(OmniStrategyBase):
             engine_args.setdefault("diffusion_kv_max_rows_per_request", 2 if use_cfg else 1)
 
         # Strip LLM-only fields from OmniEngineArgs before passing to diffusion ingress.
+        # Tracked upstream in https://github.com/vllm-project/vllm-omni/issues/8503.
         allowed = _diffusion_ingress_allowed_fields()
         dropped = sorted(key for key in engine_args if key not in allowed)
         for key in dropped:

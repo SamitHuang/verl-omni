@@ -764,7 +764,6 @@ def test_diffusion_strategy_preserves_engine_argument_preparation(monkeypatch):
         "vae_use_tiling": False,
         "text_encoder_tp_size": 1,
         "custom_pipeline_args": {"pipeline_class": "package.Adapter"},
-        "enable_prefix_caching": False,
         "enable_prompt_embed_cache": True,
         "prompt_embed_cache_size": 16,
         "dtype": "bfloat16",
