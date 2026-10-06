@@ -863,7 +863,22 @@ def test_diffusion_strategy_selects_paged_kv_mode_with_prefix_caching(monkeypatc
     assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
     assert engine_args["diffusion_kv_max_rows_per_request"] == 2
 
+    # A dict pipeline mapping works identically to SimpleNamespace / DictConfig
+    server.model_config.pipeline = {"guidance_scale": 7.5}
+    engine_args: dict = {}
+    strategy.prepare_engine_args(engine_args, Namespace())
+    assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
+    assert engine_args["diffusion_kv_max_rows_per_request"] == 2
+
+    # Prefix caching enabled via engine_args is honored and set to True on supported pipeline
+    server.config = dataclasses.replace(server.config, enable_prefix_caching=False)
+    engine_args = {"enable_prefix_caching": True}
+    strategy.prepare_engine_args(engine_args, Namespace())
+    assert engine_args["enable_prefix_caching"] is True
+    assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
+
     # Unsupported architecture (e.g. SD3Pipeline) disables prefix caching and keeps dense KV
+    server.config = dataclasses.replace(server.config, enable_prefix_caching=True)
     server.model_config.architecture = "SD3Pipeline"
     engine_args: dict = {}
     strategy.prepare_engine_args(engine_args, Namespace())
@@ -1071,6 +1086,12 @@ def test_drop_defaulted_engine_args_keeps_only_explicit_overrides():
     # Keys unknown to OmniEngineArgs (orchestrator extras) are preserved.
     engine_args["custom_orchestrator_flag"] = True
     assert server_module._drop_defaulted_engine_args(engine_args)["custom_orchestrator_flag"] is True
+
+    # Strict type checks prevent bool/int cross-equality (e.g. 0 == False)
+    assert not server_module._is_defaulted_value("max_num_seqs", False, 0)
+    assert not server_module._is_defaulted_value("enforce_eager", 0, False)
+    assert server_module._is_defaulted_value("max_num_seqs", 0, 0)
+    assert server_module._is_defaulted_value("enforce_eager", False, False)
 
     # Parser-level normalizations count as defaults: argparse applies
     # type=json.loads to string defaults (dict {} vs "{}"), and some string

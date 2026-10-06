@@ -270,7 +270,10 @@ class DiffusionStrategy(OmniStrategyBase):
         # Prefix caching requires paged_scheduler and cannot be combined with sleep mode.
         # Paged KV is currently supported only for HunyuanImage-3.0 in request mode with FLASH_ATTN.
         sleep_enabled = getattr(self.server.config, "enable_sleep_mode", False)
-        prefix_caching = bool(getattr(self.server.config, "enable_prefix_caching", False))
+        prefix_caching = bool(
+            getattr(self.server.config, "enable_prefix_caching", False)
+            or engine_args.get("enable_prefix_caching", False)
+        )
         if prefix_caching and sleep_enabled:
             prefix_caching = False
             engine_args["enable_prefix_caching"] = False
@@ -289,6 +292,7 @@ class DiffusionStrategy(OmniStrategyBase):
 
         if prefix_caching:
             if supports_paged_kv:
+                engine_args["enable_prefix_caching"] = True
                 engine_args.setdefault("diffusion_kv_mode", "paged_scheduler")
             else:
                 logger.info(
@@ -301,10 +305,19 @@ class DiffusionStrategy(OmniStrategyBase):
                 engine_args["enable_prefix_caching"] = False
 
         if engine_args.get("diffusion_kv_mode") == "paged_scheduler":
-            pipeline_cfg = getattr(self.server.config, "pipeline", None)
-            if getattr(pipeline_cfg, "guidance_scale", None) is None:
-                pipeline_cfg = getattr(self.server.model_config, "pipeline", None)
-            guidance = getattr(pipeline_cfg, "guidance_scale", 1.0)
+
+            def _get_guidance(cfg: Any) -> Any:
+                if cfg is None:
+                    return None
+                if isinstance(cfg, dict) or hasattr(cfg, "get"):
+                    return cfg.get("guidance_scale")
+                return getattr(cfg, "guidance_scale", None)
+
+            guidance = _get_guidance(getattr(self.server.config, "pipeline", None))
+            if guidance is None:
+                guidance = _get_guidance(getattr(self.server.model_config, "pipeline", None))
+            if guidance is None:
+                guidance = 1.0
             try:
                 use_cfg = float(guidance) != 1.0
             except (TypeError, ValueError):

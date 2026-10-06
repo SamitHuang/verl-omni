@@ -120,6 +120,7 @@ async def test_abort_runs_before_pause_with_one_batched_call():
         "ext-1-abc": _FakeRequestState("ext-1-abc", "ext-1"),
         "ext-1-def": _FakeRequestState("ext-1-def", "ext-1"),  # same external id
         "ext-2-xyz": _FakeRequestState("ext-2-xyz", "ext-2"),
+        "ext-none": _FakeRequestState("ext-none", None),  # None external id must be skipped
     }
     engine = _FakeAsyncOmni(states=states)
     server = _make_server(engine)

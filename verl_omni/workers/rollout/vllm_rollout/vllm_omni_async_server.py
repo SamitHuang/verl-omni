@@ -61,12 +61,19 @@ _ENGINE_ARGS_DEFAULTS: dict | None = None
 def _is_defaulted_value(key: str, value: Any, default: Any) -> bool:
     """Return True if *value* matches the upstream default for *key*."""
     if value == default:
+        if isinstance(value, bool) != isinstance(default, bool):
+            return False
         return True
     if default is None and value in ("", {}, []):
         return True
     if isinstance(default, str) and isinstance(value, dict | list):
         try:
             return json.loads(default) == value
+        except (ValueError, TypeError):
+            return False
+    if isinstance(value, str) and isinstance(default, dict | list):
+        try:
+            return json.loads(value) == default
         except (ValueError, TypeError):
             return False
     return False
@@ -482,10 +489,11 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         seen: set[str] = set()
         request_ids: list[str] = []
         for state in engine.request_states.values():
-            if state.external_request_id in seen:
+            ext_id = state.external_request_id
+            if not ext_id or ext_id in seen:
                 continue
-            seen.add(state.external_request_id)
-            request_ids.append(state.external_request_id)
+            seen.add(ext_id)
+            request_ids.append(ext_id)
 
         await asyncio.wait_for(
             engine.abort(request_ids), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
