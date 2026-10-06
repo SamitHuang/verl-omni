@@ -110,11 +110,12 @@ def test_reference_image_short_edge_environment_override_is_restored(monkeypatch
 
     monkeypatch.setenv("REF_IMAGE_SHORT_EDGE", "1024")
     image = Image.new("RGB", (640, 400))
+    original_shape = h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)
 
     with ref2va_reference_image_short_edge() as short_edge:
         assert short_edge == 1024
         assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 1024
-    assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 384
+    assert h3_preprocessing.resolve_minimax_h3_reference_image_shape(image) == original_shape
 
 
 def test_request_short_edge_overrides_environment_temporarily(monkeypatch):
@@ -123,6 +124,7 @@ def test_request_short_edge_overrides_environment_temporarily(monkeypatch):
 
     monkeypatch.setenv("REF_IMAGE_SHORT_EDGE", "512")
     image = Image.new("RGB", (640, 400))
+    original_shape = h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)
     monkeypatch.setattr(
         MiniMaxH3Pipeline,
         "forward",
@@ -139,13 +141,14 @@ def test_request_short_edge_overrides_environment_temporarily(monkeypatch):
     )
 
     assert pipeline.forward(request) == 1024
-    assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 384
+    assert h3_preprocessing.resolve_minimax_h3_reference_image_shape(image) == original_shape
 
 
 def test_reference_image_short_edge_serializes_concurrent_overrides(monkeypatch):
     import vllm_omni.model_executor.models.minimax_h3.preprocessing as h3_preprocessing
 
     image = Image.new("RGB", (640, 400))
+    original_shape = h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)
     first_entered = Event()
     release_first = Event()
     second_started = Event()
@@ -178,7 +181,7 @@ def test_reference_image_short_edge_serializes_concurrent_overrides(monkeypatch)
     second.join(timeout=2)
 
     assert results == [512, 1024]
-    assert min(h3_preprocessing.resolve_minimax_h3_reference_image_shape(image)) == 384
+    assert h3_preprocessing.resolve_minimax_h3_reference_image_shape(image) == original_shape
 
 
 @pytest.mark.parametrize("value", ["invalid", "255", "1000", "2049"])

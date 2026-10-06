@@ -68,6 +68,7 @@ class VLLMOmniHijack:
             logger.debug("Supported LoRA modules: %s", self._expected_lora_modules)
 
             lora_tensors = None
+            loaded = None
 
             if isinstance(lora_request, OmniTensorLoRARequest):
                 peft_config = lora_request.peft_config

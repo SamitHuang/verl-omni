@@ -41,14 +41,8 @@ _NPU_WORKER_EXTENSION = "verl_omni.workers.rollout.vllm_rollout.npu_utils.vLLMOm
 def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     """Mirror vllm-omni's diffusion ingress allowlist.
 
-    Newer vllm-omni strictly rejects any diffusion engine kwarg without an
-    owner (``validate_omni_diffusion_kwargs``), while verl forwards the full
-    ``OmniEngineArgs`` namespace -- including vLLM LLM-only fields such as
-    ``block_size`` -- into ``AsyncOmni(**engine_args)``. Recompute upstream's
-    own ``allowed_fields`` here so diffusion startup only forwards owned keys.
-    The formula must stay in sync with
-    ``normalize_and_validate_diffusion_engine_ingress_kwargs``; the CPU
-    strategy test guards the contract.
+    TODO (vllm-omni): Clean up OmniEngineArgs boundary; tracked in
+    https://github.com/vllm-project/vllm-omni/issues/8503.
     """
     from dataclasses import fields
     from typing import Any, cast
@@ -67,23 +61,22 @@ def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     from vllm_omni.diffusion.data import OmniDiffusionConfig
     from vllm_omni.engine.arg_utils import orchestrator_field_names
 
-    diffusion_config_fields = frozenset(field.name for field in fields(OmniDiffusionConfig))
     stage_fields = (
-        diffusion_config_fields
+        {f.name for f in fields(OmniDiffusionConfig)}
         | _DIFFUSION_OWNED_STAGE_ENGINE_FIELDS
-        | frozenset(_STAGE_DEPLOY_ENGINE_FIELDS)
-        | frozenset(_PIPELINE_DEPLOY_CLI_FIELDS)
+        | set(_STAGE_DEPLOY_ENGINE_FIELDS)
+        | set(_PIPELINE_DEPLOY_CLI_FIELDS)
         | _DIFFUSION_STAGE_METADATA_FIELDS
         | _DIFFUSION_DEFAULT_FACTORY_FIELDS
     )
     infra_fields = (
         _DIFFUSION_SHARED_ONLY_ENGINE_FIELDS
         | _NON_STAGE_ENGINE_CLI_FIELDS
-        | frozenset(field.name for field in fields(FrontendArgs))
-        | frozenset(field.name for field in fields(cast(Any, VllmOmniOrchestratorConfig)))
+        | {f.name for f in fields(FrontendArgs)}
+        | {f.name for f in fields(cast(Any, VllmOmniOrchestratorConfig))}
         | orchestrator_field_names()
     )
-    return stage_fields | infra_fields
+    return frozenset(stage_fields | infra_fields)
 
 
 def _diffusion_output_type(sampling_params: dict[str, Any]) -> str:
@@ -266,63 +259,6 @@ class DiffusionStrategy(OmniStrategyBase):
         )
         if trust_remote_code:
             engine_args["trust_remote_code"] = True
-
-        # Prefix caching requires paged_scheduler and cannot be combined with sleep mode.
-        # Paged KV is currently supported only for HunyuanImage-3.0 in request mode with FLASH_ATTN.
-        sleep_enabled = getattr(self.server.config, "enable_sleep_mode", False)
-        prefix_caching = bool(
-            getattr(self.server.config, "enable_prefix_caching", False)
-            or engine_args.get("enable_prefix_caching", False)
-        )
-        if prefix_caching and sleep_enabled:
-            prefix_caching = False
-            engine_args["enable_prefix_caching"] = False
-
-        arch = str(getattr(self.server.model_config, "architecture", "") or "")
-        model_name = str(getattr(self.server.model_config, "model", "") or "")
-        model_path = str(getattr(self.server.model_config, "model_path", "") or "")
-        step_exec = bool(getattr(self.server.config, "step_execution", False))
-        attn_backend = getattr(self.server.config, "rollout_attn_backend", None)
-        is_hunyuan_image3 = any(
-            any(k in s.lower() for k in ("hunyuan_image3", "hunyuan-image3", "hunyuanimage3", "hunyuan_image_3"))
-            for s in (arch, model_name, model_path)
-        )
-        is_flash_attn = attn_backend is None or str(attn_backend).upper() in ("FLASH_ATTN", "FLASHATTN")
-        supports_paged_kv = is_hunyuan_image3 and not step_exec and is_flash_attn
-
-        if prefix_caching:
-            if supports_paged_kv:
-                engine_args["enable_prefix_caching"] = True
-                engine_args.setdefault("diffusion_kv_mode", "paged_scheduler")
-            else:
-                logger.info(
-                    "Diffusion prefix caching requires HunyuanImage-3.0 in request mode with FLASH_ATTN; "
-                    "disabling prefix caching for %s (step_execution=%s, backend=%s).",
-                    arch or model_name or "current pipeline",
-                    step_exec,
-                    attn_backend,
-                )
-                engine_args["enable_prefix_caching"] = False
-
-        if engine_args.get("diffusion_kv_mode") == "paged_scheduler":
-
-            def _get_guidance(cfg: Any) -> Any:
-                if cfg is None:
-                    return None
-                if isinstance(cfg, dict) or hasattr(cfg, "get"):
-                    return cfg.get("guidance_scale")
-                return getattr(cfg, "guidance_scale", None)
-
-            guidance = _get_guidance(getattr(self.server.config, "pipeline", None))
-            if guidance is None:
-                guidance = _get_guidance(getattr(self.server.model_config, "pipeline", None))
-            if guidance is None:
-                guidance = 1.0
-            try:
-                use_cfg = float(guidance) != 1.0
-            except (TypeError, ValueError):
-                use_cfg = True
-            engine_args.setdefault("diffusion_kv_max_rows_per_request", 2 if use_cfg else 1)
 
         # Strip LLM-only fields from OmniEngineArgs before passing to diffusion ingress.
         # Tracked upstream in https://github.com/vllm-project/vllm-omni/issues/8503.

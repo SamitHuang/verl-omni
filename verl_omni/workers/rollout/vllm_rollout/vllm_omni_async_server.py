@@ -51,6 +51,7 @@ logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
 
 # Sentinel: ``None`` is a valid cached value (LoRA not loaded).
+# TODO (vllm-omni): Move LoRA cache sentinel and engine args default resolution upstream.
 _LORA_REQUEST_CACHE_MISS = object()
 
 # Lazily-computed upstream argument defaults, used to forward only explicitly
@@ -486,23 +487,74 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             return await super().abort_all_requests(reset_prefix_cache)
 
         # ``engine.abort`` takes EXTERNAL ids; ``request_states`` is keyed by internal.
+        in_flight: list[tuple[str, str, Any]] = []
         seen: set[str] = set()
-        request_ids: list[str] = []
         for state in engine.request_states.values():
-            ext_id = state.external_request_id
-            if not ext_id or ext_id in seen:
+            if not state.external_request_id or state.external_request_id in seen:
                 continue
-            seen.add(ext_id)
-            request_ids.append(ext_id)
+            seen.add(state.external_request_id)
+            in_flight.append((state.request_id, state.external_request_id, state))
 
-        await asyncio.wait_for(
-            engine.abort(request_ids), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
-        )
-        # Pause even with nothing to abort: holds admission until resume_generation.
-        await engine.pause_generation(mode="abort", wait_for_inflight_requests=False, clear_cache=reset_prefix_cache)
+        request_ids = [external_id for _, external_id, _ in in_flight]
+
+        aborted = False
+        try:
+            await asyncio.wait_for(
+                engine.abort(request_ids), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
+            )
+            aborted = True
+            # Pause even with nothing to abort: holds admission until resume_generation.
+            await engine.pause_generation(
+                mode="abort", wait_for_inflight_requests=False, clear_cache=reset_prefix_cache
+            )
+        except Exception:
+            # If the engine abort RPC fails or times out, upstream has not
+            # delivered terminals to waiting generator coroutines. Enqueue
+            # synthetic abort outputs so active generators unblock and exit.
+            if not aborted:
+                for internal_id, _, state in in_flight:
+                    self._enqueue_abort_output(internal_id, state)
+            raise
 
         logger.info("Aborted %d request(s): %s", len(request_ids), request_ids)
         return {"aborted_count": len(request_ids), "request_ids": request_ids}
+
+    def _enqueue_abort_output(self, internal_id: str, req_state: Any) -> None:
+        """Synthesize a terminal abort OutputMessage and put it into a per-request queue.
+
+        Ensures active generators in ``_process_orchestrator_results`` unblock from
+        ``queue.get()`` and clean up if the orchestrator abort RPC raises or times out.
+        """
+        from vllm.outputs import CompletionOutput
+        from vllm_omni.engine.messages import OutputMessage
+        from vllm_omni.outputs import OmniRequestOutput
+
+        completion = CompletionOutput(
+            index=0,
+            text="",
+            token_ids=[],
+            cumulative_logprob=None,
+            logprobs=None,
+            finish_reason="abort",
+            stop_reason=None,
+        )
+        omni_output = OmniRequestOutput(
+            request_id=internal_id,
+            outputs=[completion],
+            finished=True,
+        )
+        # Use the final stage so _process_single_result's stage_meta.final_output
+        # check passes and the output is yielded (not silently dropped).
+        final_stage_id = max(0, getattr(self.engine, "num_stages", 1) - 1)
+        msg = OutputMessage(
+            request_id=internal_id,
+            stage_id=final_stage_id,
+            engine_outputs=omni_output,
+            finished=True,
+        )
+        queue = getattr(req_state, "queue", None)
+        if queue is not None:
+            queue.put_nowait(msg)
 
     async def abort_request(self, request_id: str, reset_prefix_cache: bool = True) -> dict[str, Any]:
         """Abort a single in-flight request on the AsyncOmni engine."""
@@ -510,9 +562,20 @@ class vLLMOmniHttpServer(vLLMHttpServer):
         if getattr(engine, "output_processor", None) is not None:
             return await super().abort_request(request_id, reset_prefix_cache)
 
-        await asyncio.wait_for(
-            engine.abort(request_id), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
-        )
+        in_flight_state = None
+        for state in engine.request_states.values():
+            if state.external_request_id == request_id:
+                in_flight_state = state
+                break
+
+        try:
+            await asyncio.wait_for(
+                engine.abort(request_id), timeout=float(os.getenv("VERL_OMNI_ABORT_ACK_TIMEOUT_S", "120"))
+            )
+        except Exception:
+            if in_flight_state is not None:
+                self._enqueue_abort_output(in_flight_state.request_id, in_flight_state)
+            raise
 
         logger.info("Aborted request: %s", request_id)
         return {"aborted": True, "request_id": request_id}

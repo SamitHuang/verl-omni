@@ -283,6 +283,10 @@ async def test_abort_failure_propagates_without_pausing():
         await server.abort_all_requests()
 
     assert engine.pause_calls == []
+    for state in states.values():
+        terminal = state.queue.get_nowait()
+        assert terminal.finished is True
+        assert terminal.engine_outputs.outputs[0].finish_reason == "abort"
 
 
 async def test_pause_failure_after_successful_abort_does_not_double_enqueue():
@@ -316,6 +320,11 @@ async def test_abort_ack_timeout_raises(monkeypatch):
     with pytest.raises(asyncio.TimeoutError):
         await server.abort_all_requests()
 
+    for state in states.values():
+        terminal = state.queue.get_nowait()
+        assert terminal.finished is True
+        assert terminal.engine_outputs.outputs[0].finish_reason == "abort"
+
 
 # ---------------------------------------------------------------------------
 # single-request abort shares the contract
@@ -335,6 +344,19 @@ async def test_abort_request_aborts_single_id_without_pausing():
     assert engine.calls == ["abort"], "single-request abort must not pause the engine"
     assert states["ext-1-abc"].queue.qsize() == 1  # engine terminal only
     assert result == {"aborted": True, "request_id": "ext-1"}
+
+
+async def test_abort_request_failure_enqueues_terminal():
+    states = {"ext-1-abc": _FakeRequestState("ext-1-abc", "ext-1")}
+    engine = _FakeAsyncOmni(states=states, fail_abort=True)
+    server = _make_server(engine)
+
+    with pytest.raises(RuntimeError, match="abort rpc failed"):
+        await server.abort_request("ext-1")
+
+    terminal = states["ext-1-abc"].queue.get_nowait()
+    assert terminal.finished is True
+    assert terminal.engine_outputs.outputs[0].finish_reason == "abort"
 
 
 async def test_abort_request_unknown_id_is_a_noop():

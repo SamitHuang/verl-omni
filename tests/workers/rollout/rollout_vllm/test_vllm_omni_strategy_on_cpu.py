@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import dataclasses
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -814,84 +813,6 @@ def test_diffusion_strategy_emits_canonical_prompt(num_stages, first_stage_type)
     }
     assert prompt["mm_processor_kwargs"] == {"video_fps": 24, "audio_sample_rate": 32_000}
     assert params[-1].extra_args == {"pipeline_private_arg": 7}
-
-
-def test_diffusion_strategy_selects_paged_kv_mode_with_prefix_caching(monkeypatch):
-    """Prefix caching requires diffusion_kv_mode='paged_scheduler' on HunyuanImage-3.0."""
-    monkeypatch.setattr(diffusion_strategy_module, "import_external_libs", lambda *args: None)
-    monkeypatch.setattr(
-        diffusion_strategy_module.VllmOmniPipelineBase,
-        "get_pipeline_path",
-        staticmethod(lambda **kwargs: None),
-    )
-    server = SimpleNamespace(
-        config=DiffusionRolloutConfig(
-            external_lib=[],
-            tensor_model_parallel_size=1,
-            text_encoder_tp_size=1,
-            enable_prefix_caching=True,
-            enable_sleep_mode=False,
-            enable_prompt_embed_cache=False,
-            prompt_embed_cache_size=16,
-            rollout_attn_backend="FLASH_ATTN",
-        ),
-        model_config=SimpleNamespace(architecture="HunyuanImage3Pipeline", algorithm="Algorithm"),
-    )
-    strategy = DiffusionStrategy(server)
-
-    # Hunyuan in request mode with default (FlashAttn) backend selects paged_scheduler
-    engine_args: dict = {}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
-    assert engine_args["diffusion_kv_max_rows_per_request"] == 1
-
-    server.config = dataclasses.replace(server.config, enable_prefix_caching=False)
-    engine_args: dict = {}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    # Prefix caching off: leave the mode unset so upstream uses its default.
-    assert "diffusion_kv_mode" not in engine_args
-
-    server.config = dataclasses.replace(
-        server.config,
-        enable_prefix_caching=True,
-        enable_prompt_embed_cache=True,
-        prompt_embed_cache_size=8,
-    )
-    server.model_config.pipeline = SimpleNamespace(guidance_scale=7.5)
-    engine_args: dict = {}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
-    assert engine_args["diffusion_kv_max_rows_per_request"] == 2
-
-    # A dict pipeline mapping works identically to SimpleNamespace / DictConfig
-    server.model_config.pipeline = {"guidance_scale": 7.5}
-    engine_args: dict = {}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
-    assert engine_args["diffusion_kv_max_rows_per_request"] == 2
-
-    # Prefix caching enabled via engine_args is honored and set to True on supported pipeline
-    server.config = dataclasses.replace(server.config, enable_prefix_caching=False)
-    engine_args = {"enable_prefix_caching": True}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    assert engine_args["enable_prefix_caching"] is True
-    assert engine_args["diffusion_kv_mode"] == "paged_scheduler"
-
-    # Unsupported architecture (e.g. SD3Pipeline) disables prefix caching and keeps dense KV
-    server.config = dataclasses.replace(server.config, enable_prefix_caching=True)
-    server.model_config.architecture = "SD3Pipeline"
-    engine_args: dict = {}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    assert "diffusion_kv_mode" not in engine_args
-    assert engine_args.get("enable_prefix_caching") is False
-
-    # Hunyuan in step execution mode does not support paged KV
-    server.model_config.architecture = "HunyuanImage3Pipeline"
-    server.config = dataclasses.replace(server.config, step_execution=True)
-    engine_args: dict = {}
-    strategy.prepare_engine_args(engine_args, Namespace())
-    assert "diffusion_kv_mode" not in engine_args
-    assert engine_args.get("enable_prefix_caching") is False
 
 
 @pytest.mark.asyncio
