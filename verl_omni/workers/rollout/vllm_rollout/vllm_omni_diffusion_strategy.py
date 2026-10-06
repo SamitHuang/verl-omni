@@ -267,17 +267,8 @@ class DiffusionStrategy(OmniStrategyBase):
         if trust_remote_code:
             engine_args["trust_remote_code"] = True
 
-        # vllm-omni (12e9280+) validates that enable_prefix_caching requires
-        # diffusion_kv_mode='paged_scheduler' (OmniConfig), and separately that
-        # prefix caching cannot be combined with sleep mode (sleep discards KV
-        # pages without invalidating cached prefixes). Sleep mode frees the
-        # rollout weights so the actor can train on the same GPUs, so when
-        # sleep is enabled it wins and prefix caching is switched off.
-        #
-        # Upstream only supports paged_scheduler for HunyuanImage-3.0 in request
-        # mode (step_execution=False) with FLASH_ATTN. For all other diffusion
-        # architectures, paged KV is not integrated, so dense_legacy is kept
-        # and prefix caching is disabled.
+        # Prefix caching requires paged_scheduler and cannot be combined with sleep mode.
+        # Paged KV is currently supported only for HunyuanImage-3.0 in request mode with FLASH_ATTN.
         sleep_enabled = getattr(self.server.config, "enable_sleep_mode", False)
         prefix_caching = bool(getattr(self.server.config, "enable_prefix_caching", False))
         if prefix_caching and sleep_enabled:
