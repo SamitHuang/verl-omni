@@ -51,11 +51,11 @@ logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
 
 # Sentinel: ``None`` is a valid cached value (LoRA not loaded).
-# TODO (vllm-omni): Move LoRA cache sentinel and engine args default resolution upstream.
+# TODO (vllm-omni#8503): Move LoRA cache sentinel and engine args default resolution upstream.
 _LORA_REQUEST_CACHE_MISS = object()
 
 # Lazily-computed upstream argument defaults, used to forward only explicitly
-# set engine arguments (see ``_drop_defaulted_engine_args``).
+# set engine arguments (see ``_drop_defaulted_engine_args``; tracked in vllm-omni#8503).
 _ENGINE_ARGS_DEFAULTS: dict | None = None
 
 
@@ -219,16 +219,10 @@ class vLLMOmniHttpServer(vLLMHttpServer):
             if value is not None:
                 engine_args[key] = value
 
-        # vLLM's ``EngineArgs.__post_init__`` expands a user ``dict`` into a
-        # live ``CompilationConfig`` whose runtime fields (``traced_files``,
-        # ``compilation_time``, ...) the new strict stage config rejects on
-        # rebuild. Restore the raw user mapping so only real overrides travel.
+        # Restore raw user mapping so compilation runtime fields do not fail stage config validation.
         _restore_raw_compilation_config(engine_args, args)
 
-        # Forward only explicitly-set arguments: the new upstream rejects
-        # defaulted engine arguments that no pipeline stage owns (see
-        # ``_drop_defaulted_engine_args``). Strategy-specific arguments are
-        # added afterwards by ``prepare_engine_args`` and are unaffected.
+        # Forward only explicitly-set engine args; stage config rejects unowned defaults.
         engine_args = _drop_defaulted_engine_args(engine_args)
 
         deploy_config = getattr(args, "deploy_config", None)

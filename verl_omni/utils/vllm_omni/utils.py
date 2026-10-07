@@ -85,9 +85,8 @@ class VLLMOmniHijack:
                 lora_path = get_adapter_absolute_path(lora_request.lora_path)
                 logger.debug("Resolved LoRA path: %s", lora_path)
 
-                # Honor the pipeline-owned loader hook introduced in newer
-                # vllm-omni (``_load_diffusion_lora_adapter``); pipelines with
-                # custom checkpoint layouts load through it.
+                # Honor the pipeline-owned loader hook (``_load_diffusion_lora_adapter``);
+                # pipelines with custom checkpoint layouts load through it.
                 model_loader = getattr(self.pipeline, "_load_diffusion_lora_adapter", None)
                 loaded = None
                 if callable(model_loader):

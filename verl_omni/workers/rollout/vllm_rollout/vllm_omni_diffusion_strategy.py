@@ -190,7 +190,8 @@ class DiffusionStrategy(OmniStrategyBase):
                 parallel_config[key] = value
             engine_args[key] = value
 
-        # TODO(vllm-omni#7564): Drop this pin-compat shim; tracked in verl-omni#445.
+        # Upstream vllm-omni#7652 resolved vllm-omni#7564 (tracked in verl-omni#445 P31);
+        # text_encoder_tp_size is now preserved natively in OmniEngineArgs.
         text_encoder_tp = config.text_encoder_tp_size
         cli_text_encoder_tp = getattr(args, "text_encoder_tp_size", None)
         if cli_text_encoder_tp is not None:
@@ -211,6 +212,8 @@ class DiffusionStrategy(OmniStrategyBase):
         if text_encoder_tp < 1 or text_encoder_tp not in (1, dit_world_size):
             raise ValueError(f"text_encoder_tp_size must be 1 or equal to DiT group size ({dit_world_size}).")
         engine_args["text_encoder_tp_size"] = text_encoder_tp
+        if parallel_config is not None:
+            parallel_config["text_encoder_tp_size"] = text_encoder_tp
         if config.ulysses_degree * config.ring_degree > 1:
             for key in ("cfg_parallel_size", "allgather_degree"):
                 value = (parallel_config or {}).get(key, getattr(args, key, None))
