@@ -59,7 +59,7 @@ class MiniMaxH3DiffusionSingleTurnAgentLoop(DiffusionSingleTurnAgentLoop):
         """Return raw H3 text IDs without applying a chat template."""
         text = messages_to_text(messages)
         if not text:
-            return []
+            raise ValueError("MiniMax H3 requires a non-empty text prompt.")
         prompt_length = self.rollout_config.prompt_length
         tokenized = await self.loop.run_in_executor(
             None,
