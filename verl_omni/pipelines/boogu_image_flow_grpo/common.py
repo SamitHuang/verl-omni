@@ -226,6 +226,14 @@ def lora_module_name(tensor_name: str) -> str:
 #: component-qualified even though ``component.named_modules()`` is not.
 _LORA_COMPONENT_NAMES: tuple[str, ...] = ("transformer", "transformer_2", "dit", "bagel", "unet")
 
+#: Packed submodules for Boogu-Image fused projections in vllm-omni.
+_BOOGU_PACKED_SUBMODULES: dict[str, tuple[str, ...]] = {
+    "to_qkv": ("to_q", "to_k", "to_v"),
+    "img_to_qkv": ("img_to_q", "img_to_k", "img_to_v"),
+    "instruct_to_qkv": ("instruct_to_q", "instruct_to_k", "instruct_to_v"),
+    "gate_up_proj": ("linear_1", "linear_3"),
+}
+
 
 def lora_engine_module_names(pipeline) -> list[str]:
     """Engine-side module names a vllm-omni LoRA delta can be looked up by.
@@ -246,7 +254,13 @@ def lora_engine_module_names(pipeline) -> list[str]:
         if not isinstance(component, torch.nn.Module):
             continue
         for module_name, _ in component.named_modules(remove_duplicate=False):
-            names.append(f"{component_name}.{module_name}" if module_name else component_name)
+            full_name = f"{component_name}.{module_name}" if module_name else component_name
+            names.append(full_name)
+            leaf = module_name.rsplit(".", 1)[-1]
+            if leaf in _BOOGU_PACKED_SUBMODULES:
+                prefix = full_name.rsplit(".", 1)[0]
+                for sub in _BOOGU_PACKED_SUBMODULES[leaf]:
+                    names.append(f"{prefix}.{sub}")
     return names
 
 

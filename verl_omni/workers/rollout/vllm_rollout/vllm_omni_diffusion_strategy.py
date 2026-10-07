@@ -47,31 +47,26 @@ def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     from dataclasses import fields
     from typing import Any, cast
 
+    import vllm_omni.config.omni_config as omni_config_mod
     from vllm.entrypoints.launchers.cli_args import FrontendArgs
     from vllm_omni.config import VllmOmniOrchestratorConfig
-    from vllm_omni.config.omni_config import (
-        _DIFFUSION_DEFAULT_FACTORY_FIELDS,
-        _DIFFUSION_OWNED_STAGE_ENGINE_FIELDS,
-        _DIFFUSION_SHARED_ONLY_ENGINE_FIELDS,
-        _DIFFUSION_STAGE_METADATA_FIELDS,
-        _NON_STAGE_ENGINE_CLI_FIELDS,
-        _PIPELINE_DEPLOY_CLI_FIELDS,
-        _STAGE_DEPLOY_ENGINE_FIELDS,
-    )
     from vllm_omni.diffusion.data import OmniDiffusionConfig
     from vllm_omni.engine.arg_utils import orchestrator_field_names
 
+    def _get_fields(attr: str) -> set[str]:
+        return set(getattr(omni_config_mod, attr, ()))
+
     stage_fields = (
         {f.name for f in fields(OmniDiffusionConfig)}
-        | _DIFFUSION_OWNED_STAGE_ENGINE_FIELDS
-        | set(_STAGE_DEPLOY_ENGINE_FIELDS)
-        | set(_PIPELINE_DEPLOY_CLI_FIELDS)
-        | _DIFFUSION_STAGE_METADATA_FIELDS
-        | _DIFFUSION_DEFAULT_FACTORY_FIELDS
+        | _get_fields("_DIFFUSION_OWNED_STAGE_ENGINE_FIELDS")
+        | _get_fields("_STAGE_DEPLOY_ENGINE_FIELDS")
+        | _get_fields("_PIPELINE_DEPLOY_CLI_FIELDS")
+        | _get_fields("_DIFFUSION_STAGE_METADATA_FIELDS")
+        | _get_fields("_DIFFUSION_DEFAULT_FACTORY_FIELDS")
     )
     infra_fields = (
-        _DIFFUSION_SHARED_ONLY_ENGINE_FIELDS
-        | _NON_STAGE_ENGINE_CLI_FIELDS
+        _get_fields("_DIFFUSION_SHARED_ONLY_ENGINE_FIELDS")
+        | _get_fields("_NON_STAGE_ENGINE_CLI_FIELDS")
         | {f.name for f in fields(FrontendArgs)}
         | {f.name for f in fields(cast(Any, VllmOmniOrchestratorConfig))}
         | orchestrator_field_names()
