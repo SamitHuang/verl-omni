@@ -97,16 +97,11 @@ def apply_boogu_text_cfg(
 
 
 _FREQS_CIS_CACHE: dict[tuple, Any] = {}
+_FREQS_REAL_CACHE: dict[tuple, Any] = {}
 
 
 def get_boogu_freqs_cis(axes_dim_rope, axes_lens, theta: int = 10000):
-    """Build (and cache) the rotary tables the Boogu transformer consumes.
-
-    Prefers the canonical implementation from the installed boogu-image
-    package (the training-side transformer is the canonical class, so its
-    rope tables must come from the same code); falls back to the verbatim
-    vllm-omni port, which the rollout-side transformer uses.
-    """
+    """Build (and cache) the complex rotary tables the canonical Boogu transformer consumes."""
     key = (tuple(axes_dim_rope), tuple(axes_lens), theta)
     if key in _FREQS_CIS_CACHE:
         return _FREQS_CIS_CACHE[key]
@@ -121,6 +116,21 @@ def get_boogu_freqs_cis(axes_dim_rope, axes_lens, theta: int = 10000):
     freqs_cis = _Rope.get_freqs_cis(list(axes_dim_rope), list(axes_lens), theta=theta)
     _FREQS_CIS_CACHE[key] = freqs_cis
     return freqs_cis
+
+
+def get_boogu_freqs_real(axes_dim_rope, axes_lens, theta: int = 10000):
+    """Build (and cache) the real rotary tables the vllm-omni Boogu transformer consumes."""
+    key = (tuple(axes_dim_rope), tuple(axes_lens), theta)
+    if key in _FREQS_REAL_CACHE:
+        return _FREQS_REAL_CACHE[key]
+
+    from vllm_omni.diffusion.models.boogu_image.boogu_image_transformer import (
+        BooguImageDoubleStreamRotaryPosEmbed,
+    )
+
+    freqs_real = BooguImageDoubleStreamRotaryPosEmbed.get_freqs_real(list(axes_dim_rope), list(axes_lens), theta=theta)
+    _FREQS_REAL_CACHE[key] = freqs_real
+    return freqs_real
 
 
 def resolve_text_guidance_scale(guidance_scale: Optional[float]) -> float:

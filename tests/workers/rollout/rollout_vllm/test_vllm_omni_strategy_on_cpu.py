@@ -1112,3 +1112,18 @@ def test_restore_raw_compilation_config_keeps_user_mapping():
     engine_args = {"compilation_config": asdict(CompilationConfig())}
     server_module._restore_raw_compilation_config(engine_args, SimpleNamespace(compilation_config=None))
     assert "compilation_config" not in engine_args
+
+
+def test_diffusion_ingress_allowed_fields_handles_missing_launcher_module(monkeypatch):
+    """Ingress allowlist must not fail when vllm.entrypoints.launchers is unavailable."""
+    import sys
+
+    # Simulate environment where vllm.entrypoints.launchers does not exist
+    for key in list(sys.modules.keys()):
+        if "vllm.entrypoints.launchers" in key:
+            monkeypatch.setitem(sys.modules, key, None)
+
+    allowed = diffusion_strategy_module._diffusion_ingress_allowed_fields()
+    assert isinstance(allowed, frozenset)
+    assert len(allowed) > 0
+    assert "height" in allowed or "num_inference_steps" in allowed or "dtype" in allowed

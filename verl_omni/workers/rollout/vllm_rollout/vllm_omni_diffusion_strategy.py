@@ -48,10 +48,27 @@ def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     from typing import Any, cast
 
     import vllm_omni.config.omni_config as omni_config_mod
-    from vllm.entrypoints.launchers.cli_args import FrontendArgs
     from vllm_omni.config import VllmOmniOrchestratorConfig
     from vllm_omni.diffusion.data import OmniDiffusionConfig
     from vllm_omni.engine.arg_utils import orchestrator_field_names
+
+    frontend_fields: set[str] = set()
+    try:
+        from vllm.entrypoints.launchers.cli_args import FrontendArgs
+
+        frontend_fields = {f.name for f in fields(FrontendArgs)}
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        try:
+            from vllm.entrypoints.openai.cli_args import FrontendArgs
+
+            frontend_fields = {f.name for f in fields(FrontendArgs)}
+        except (ImportError, ModuleNotFoundError, AttributeError):
+            try:
+                from vllm.entrypoints.cli.args import FrontendArgs
+
+                frontend_fields = {f.name for f in fields(FrontendArgs)}
+            except (ImportError, ModuleNotFoundError, AttributeError):
+                pass
 
     def _get_fields(attr: str) -> set[str]:
         return set(getattr(omni_config_mod, attr, ()))
@@ -67,7 +84,7 @@ def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     infra_fields = (
         _get_fields("_DIFFUSION_SHARED_ONLY_ENGINE_FIELDS")
         | _get_fields("_NON_STAGE_ENGINE_CLI_FIELDS")
-        | {f.name for f in fields(FrontendArgs)}
+        | frontend_fields
         | {f.name for f in fields(cast(Any, VllmOmniOrchestratorConfig))}
         | orchestrator_field_names()
     )
