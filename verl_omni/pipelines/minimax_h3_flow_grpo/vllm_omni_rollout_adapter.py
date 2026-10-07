@@ -308,6 +308,7 @@ class MiniMaxH3PipelineWithLogProb(MiniMaxH3WeightSyncMixin, MiniMaxH3Pipeline):
                     f"does not match expected {expected}."
                 )
             target_audio_rows = locked_audio_rows.to(device=self.device, dtype=target_audio_rows.dtype)
+            branch.locked_audio_rows = target_audio_rows
 
         visual_anchor = visual_condition
         if task == "fl2va" and (visual_anchor is None or not keyframe_indices):
@@ -438,6 +439,7 @@ class MiniMaxH3PipelineWithLogProb(MiniMaxH3WeightSyncMixin, MiniMaxH3Pipeline):
                         noise_level=self._flow_grpo_noise_level if is_selected else 0.0,
                         sde_type=self._flow_grpo_sde_type,
                         generator=generator,
+                        prev_sample=target_audio_rows.unsqueeze(0) if locked_audio_rows is not None else None,
                         return_log_prob=is_selected,
                     )
                     next_video_rows = video_rows.clone()
@@ -501,7 +503,11 @@ class MiniMaxH3PipelineWithLogProb(MiniMaxH3WeightSyncMixin, MiniMaxH3Pipeline):
             "all_timesteps": (1.0 - torch.tensor(selected_video_sigmas, device=self.device)).unsqueeze(0),
             "all_log_probs": torch.stack(log_probs, dim=1),
             "h3_step_indices": torch.tensor(step_indices, device=self.device).unsqueeze(0),
-            "h3_audio_timesteps": (1.0 - torch.tensor(selected_audio_sigmas, device=self.device)).unsqueeze(0),
+            "h3_audio_timesteps": (
+                torch.ones((1, len(selected_audio_sigmas)), device=self.device)
+                if locked_audio_rows is not None
+                else (1.0 - torch.tensor(selected_audio_sigmas, device=self.device)).unsqueeze(0)
+            ),
             **replay_outputs,
         }
 
