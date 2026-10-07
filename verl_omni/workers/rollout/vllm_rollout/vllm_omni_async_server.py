@@ -203,7 +203,6 @@ class vLLMOmniHttpServer(vLLMHttpServer):
     async def run_server(self, args: argparse.Namespace):
         engine_args = OmniEngineArgs.from_cli_args(args)
         engine_args = asdict(engine_args)
-        engine_args["log_stats"] = not self.config.disable_log_stats
 
         # TODO (mike): drop this patch once vllm-omni strips the serialized default
         # fault_tolerance_config at its kwargs boundary, or vLLM defaults it to None —
@@ -224,6 +223,9 @@ class vLLMOmniHttpServer(vLLMHttpServer):
 
         # Forward only explicitly-set engine args; stage config rejects unowned defaults.
         engine_args = _drop_defaulted_engine_args(engine_args)
+        # This rollout setting is explicit even when its value matches the
+        # OmniEngineArgs default, so restore it after default filtering.
+        engine_args["log_stats"] = not self.config.disable_log_stats
 
         deploy_config = getattr(args, "deploy_config", None)
         if deploy_config:

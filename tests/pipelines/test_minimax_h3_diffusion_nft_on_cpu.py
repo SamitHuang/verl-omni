@@ -13,8 +13,7 @@
 # limitations under the License.
 """CPU tests for the MiniMax H3 DiffusionNFT adapter."""
 
-import sys
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -505,24 +504,19 @@ class TestMiniMaxH3TokenIdNativePrompt:
 
         assert pipeline._h3_prompt_ids is None
 
-    def test_t2va_encoder_consumes_exact_request_ids(self, monkeypatch):
-        module_name = "vllm_omni.diffusion.models.minimax_h3.pipeline_minimax_h3"
-        pipeline_module = ModuleType(module_name)
-        pipeline_module._dit_rank_world = lambda: (None, 0, 1)
-        pipeline_module._broadcast_tensor = lambda value, **kwargs: value
-        # Unused on the t2va path; a placeholder suffices.
-        pipeline_module.minimax_h3_multi_image_presentation = lambda tokenizer, *, prompt, image_token_counts: (
-            torch.tensor([], dtype=torch.long),
-            torch.tensor([], dtype=torch.long),
-        )
-        monkeypatch.setitem(sys.modules, module_name, pipeline_module)
+    def test_t2va_encoder_consumes_exact_request_ids(self):
+        class Parent:
+            def encode_prompt(self, prepared):
+                ids = torch.tensor(self.tokenizer(prepared.prompt)["input_ids"])
+                return ids[:, None].float(), torch.ones_like(ids)
 
-        pipeline = _StubSyncPipeline()
+        class Stub(MiniMaxH3RolloutWeightSyncMixin, Parent):
+            pass
+
+        pipeline = Stub()
         pipeline._h3_prompt_ids = torch.tensor([101, 17, 202])
-        pipeline.text_encoder_tp_size = 1
-        pipeline.device = torch.device("cpu")
-        pipeline._distribute_encode_inputs = lambda ids, vision_kwargs: ids
-        pipeline._encode_text_hidden = lambda ids, vision_kwargs: ids[:, None].float()
+        pipeline.tokenizer = lambda text: {"input_ids": [999]}
+        original_tokenizer = pipeline.tokenizer
 
         hidden, tags = pipeline.encode_prompt(
             SimpleNamespace(
@@ -534,3 +528,4 @@ class TestMiniMaxH3TokenIdNativePrompt:
 
         assert hidden[:, 0].tolist() == [101.0, 17.0, 202.0]
         assert tags.tolist() == [1, 1, 1]
+        assert pipeline.tokenizer is original_tokenizer
