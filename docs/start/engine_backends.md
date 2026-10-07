@@ -1,6 +1,6 @@
 # Optional Engine Backends
 
-Last updated: 09/24/2026
+Last updated: 10/07/2026
 
 VeRL-Omni defaults to **FSDP2** as the training engine for the policy and reference models. The diffusion trainer and Qwen3-Omni Thinker can alternatively use [**VeOmni**](https://github.com/ByteDance-Seed/VeOmni). The engine is selected at the Hydra command line — see [`examples/flowgrpo_trainer/qwen_image/run_qwen_image_ocr_veomni.sh`](https://github.com/verl-project/verl-omni/blob/main/examples/flowgrpo_trainer/qwen_image/run_qwen_image_ocr_veomni.sh) for a complete recipe.
 

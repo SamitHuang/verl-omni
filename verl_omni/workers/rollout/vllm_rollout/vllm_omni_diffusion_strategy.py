@@ -212,8 +212,6 @@ class DiffusionStrategy(OmniStrategyBase):
         if text_encoder_tp < 1 or text_encoder_tp not in (1, dit_world_size):
             raise ValueError(f"text_encoder_tp_size must be 1 or equal to DiT group size ({dit_world_size}).")
         engine_args["text_encoder_tp_size"] = text_encoder_tp
-        if parallel_config is not None:
-            parallel_config["text_encoder_tp_size"] = text_encoder_tp
         if config.ulysses_degree * config.ring_degree > 1:
             for key in ("cfg_parallel_size", "allgather_degree"):
                 value = (parallel_config or {}).get(key, getattr(args, key, None))
@@ -256,12 +254,6 @@ class DiffusionStrategy(OmniStrategyBase):
 
         engine_args["enable_prompt_embed_cache"] = self.server.config.enable_prompt_embed_cache
         engine_args["prompt_embed_cache_size"] = self.server.config.prompt_embed_cache_size
-
-        trust_remote_code = getattr(self.server.model_config, "trust_remote_code", False) or getattr(
-            self.server.config, "trust_remote_code", False
-        )
-        if trust_remote_code:
-            engine_args["trust_remote_code"] = True
 
         # Strip LLM-only fields from OmniEngineArgs before passing to diffusion ingress.
         # Tracked upstream in https://github.com/vllm-project/vllm-omni/issues/8503.

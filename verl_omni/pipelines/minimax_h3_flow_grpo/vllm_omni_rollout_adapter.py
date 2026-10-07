@@ -242,12 +242,6 @@ class MiniMaxH3PipelineWithLogProb(MiniMaxH3WeightSyncMixin, MiniMaxH3Pipeline):
         base_schedule: Sequence[float] | None = None,
         pad_seq_len: int | None = None,
         locked_audio_rows: torch.Tensor | None = None,
-        video_edit_clean_rows: torch.Tensor | None = None,
-        video_edit_mask_rows: torch.Tensor | None = None,
-        video_edit_restore_mask_rows: torch.Tensor | None = None,
-        audio_edit_clean_rows: torch.Tensor | None = None,
-        audio_edit_mask_rows: torch.Tensor | None = None,
-        audio_edit_restore_mask_rows: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         target_video_rows, target_audio_rows = self._initial_noise(
@@ -307,7 +301,7 @@ class MiniMaxH3PipelineWithLogProb(MiniMaxH3WeightSyncMixin, MiniMaxH3Pipeline):
         )
 
         if locked_audio_rows is not None:
-            expected = (int(branch.audio_update_mask.sum()), 32)
+            expected = (2 * audio_t, 32)
             if tuple(locked_audio_rows.shape) != expected:
                 raise ValueError(
                     f"MiniMax H3 locked_audio_rows shape {tuple(locked_audio_rows.shape)} "

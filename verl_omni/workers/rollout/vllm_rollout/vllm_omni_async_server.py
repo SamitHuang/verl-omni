@@ -51,7 +51,7 @@ logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
 
 # Sentinel: ``None`` is a valid cached value (LoRA not loaded).
-# TODO (vllm-omni#8503): Move LoRA cache sentinel and engine args default resolution upstream.
+# TODO: Move LoRA request cache resolution/invalidation upstream to AsyncOmni.
 _LORA_REQUEST_CACHE_MISS = object()
 
 # Lazily-computed upstream argument defaults, used to forward only explicitly
