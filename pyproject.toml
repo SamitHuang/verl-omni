@@ -97,7 +97,7 @@ line-length = 120
 exclude = ["scripts/legacy_model_merger.py"]
 
 [tool.ruff.lint]
-isort = {known-first-party = ["verl_omni"], known-third-party = ["wandb"]}
+isort = {known-first-party = ["verl_omni"]}
 # c.f. https://github.com/vllm-project/vllm/blob/ce8d6b75fc0586045df75ee1568a5b5f9957251b/pyproject.toml
 select = [
     # pycodestyle

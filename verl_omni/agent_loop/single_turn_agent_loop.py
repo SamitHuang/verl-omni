@@ -159,7 +159,7 @@ class DiffusionSingleTurnAgentLoop(AgentLoopBase):
             audios=audios,
         )
 
-        if raw_negative_prompt:
+        if raw_negative_prompt is not None:
             negative_prompt_ids = await self.ct_build_initial_tokens(
                 raw_negative_prompt,
                 images=images,
@@ -174,7 +174,7 @@ class DiffusionSingleTurnAgentLoop(AgentLoopBase):
         negative_extra_prompt_ids = None
         if self.extra_tokenizer_map:
             extra_prompt_ids = await self._tokenize_per_encoder(raw_prompt)
-            if raw_negative_prompt:
+            if raw_negative_prompt is not None:
                 negative_extra_prompt_ids = await self._tokenize_per_encoder(raw_negative_prompt)
 
         # 4. generate sequences

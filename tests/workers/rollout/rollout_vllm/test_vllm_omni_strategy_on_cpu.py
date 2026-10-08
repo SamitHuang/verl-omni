@@ -1114,16 +1114,9 @@ def test_restore_raw_compilation_config_keeps_user_mapping():
     assert "compilation_config" not in engine_args
 
 
-def test_diffusion_ingress_allowed_fields_handles_missing_launcher_module(monkeypatch):
-    """Ingress allowlist must not fail when vllm.entrypoints.launchers is unavailable."""
-    import sys
-
-    # Simulate environment where vllm.entrypoints.launchers does not exist
-    for key in list(sys.modules.keys()):
-        if "vllm.entrypoints.launchers" in key:
-            monkeypatch.setitem(sys.modules, key, None)
-
+def test_diffusion_ingress_allowed_fields_includes_pinned_frontend_fields():
     allowed = diffusion_strategy_module._diffusion_ingress_allowed_fields()
+
     assert isinstance(allowed, frozenset)
-    assert len(allowed) > 0
+    assert "enable_flash_late_interaction" in allowed
     assert "height" in allowed or "num_inference_steps" in allowed or "dtype" in allowed
