@@ -48,10 +48,18 @@ def _diffusion_ingress_allowed_fields() -> frozenset[str]:
     from typing import Any, cast
 
     import vllm_omni.config.omni_config as omni_config_mod
-    from vllm.entrypoints.launchers.cli_args import FrontendArgs
     from vllm_omni.config import VllmOmniOrchestratorConfig
     from vllm_omni.diffusion.data import OmniDiffusionConfig
     from vllm_omni.engine.arg_utils import orchestrator_field_names
+
+    try:
+        from vllm.entrypoints.launchers.cli_args import FrontendArgs
+    except ModuleNotFoundError as error:
+        if error.name not in {"vllm.entrypoints.launchers", "vllm.entrypoints.launchers.cli_args"}:
+            raise
+        # The Ascend NPU smoke image can expose frontend args at the
+        # pre-launchers path even though the GPU v0.30 wheel uses launchers.
+        from vllm.entrypoints.openai.cli_args import FrontendArgs
 
     frontend_fields = {f.name for f in fields(FrontendArgs)}
 
