@@ -31,6 +31,23 @@ def test_pairwise_clipscore_clamps_negative_cosine() -> None:
     torch.testing.assert_close(score, torch.tensor([2.5, 0.0]))
 
 
+@pytest.mark.parametrize("pairwise", ["clipscore", "pickscore"])
+def test_pairwise_scores_are_float32_for_bf16_embeddings(pairwise) -> None:
+    from verl_omni.utils.reward_score import pickscore_reward
+
+    generator = torch.Generator().manual_seed(0)
+    text = torch.randn(64, 768, generator=generator).bfloat16()
+    image = (text.float() + torch.randn(64, 768, generator=generator)).bfloat16()
+
+    if pairwise == "clipscore":
+        score = clipscore_reward._pairwise_clipscore(text, image)
+    else:
+        score = pickscore_reward._pairwise_pickscore(text, image, torch.tensor(100.0, dtype=torch.bfloat16))
+
+    assert score.dtype == torch.float32
+    assert score.unique().numel() == 64
+
+
 class _FakeInferencer:
     def __init__(self):
         self.batches = []

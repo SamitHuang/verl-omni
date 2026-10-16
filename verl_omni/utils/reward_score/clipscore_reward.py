@@ -61,7 +61,8 @@ def _pairwise_clipscore(
     scale_factor: float = 2.5,
 ) -> torch.Tensor:
     """Compute paired CLIPScore values from text and image embeddings."""
-    cosine = torch.nn.functional.cosine_similarity(text_embeddings, image_embeddings, dim=-1)
+    # In bf16 the cosine rounds to ~4e-3, a third of the within-group reward spread.
+    cosine = torch.nn.functional.cosine_similarity(text_embeddings.float(), image_embeddings.float(), dim=-1)
     return float(scale_factor) * cosine.clamp_min(0)
 
 
