@@ -1,6 +1,6 @@
 # Train Boogu-Image with DiffusionNFT
 
-Last updated: 10/15/2026
+Last updated: 10/17/2026
 
 RL post-training for [Boogu-Image-0.1-Base](https://huggingface.co/Boogu/Boogu-Image-0.1-Base)
 (text-to-image) with the DiffusionNFT trainer, using a `vllm-omni` rollout and
@@ -173,6 +173,53 @@ At step 60 the CFG-free policy also beats the CFG-4 base model on the same promp
 about 8 minutes and a validation pass (256 prompts, 40 steps) about 4 minutes. The same recipe
 on the deprecated V0 trainer gives a bit-identical step-0 validation and reaches 1.844 at step
 60; that gap comes from single runs and has not been separated from run-to-run variance.
+
+### Edit preference reward (PickScore + source consistency)
+
+```bash
+hf download osunlp/MagicBrush --repo-type dataset --local-dir ~/data/magicbrush_raw \
+    --include "data/dev-*" $(printf 'data/train-%05d-* ' $(seq 0 4 48))
+python examples/flowgrpo_trainer/data_process/boogu_image_edit_magicbrush.py \
+    --input_dir ~/data/magicbrush_raw --output_dir ~/data/boogu_image_edit_magicbrush
+bash examples/diffusionnft_trainer/boogu_image/run_boogu_image_edit_lora_v1.sh
+```
+
+The edit recipe trains `Boogu/Boogu-Image-0.1-Edit` on real MagicBrush photos with free-form
+instructions and validates on 243 first-turn dev edits (removal instructions dropped; CLIP-family
+scores do not model negation). It uses the CFG-free setting and the Qwen-Image values of the T2I
+preference recipe, and replaces PickScore with
+[`edit_consistency_reward.py`](https://github.com/verl-project/verl-omni/blob/main/verl_omni/utils/reward_score/edit_consistency_reward.py):
+
+```text
+score = PickScore(instruction, output) / 26 - 0.5 * max(0, 0.4 - cos(DINOv2(source), DINOv2(output)))
+```
+
+Both parts were needed:
+
+- PickScore against the instruction never sees the source image. Trained on it alone, the policy
+  raised validation PickScore by discarding the source and rendering only what the instruction
+  names (a night sky for "add stars", a bare gradient for "blue background").
+- The hinge must be low. On MagicBrush's human target edits the DINOv2 source similarity has a
+  median of 0.94 but a 5th percentile of 0.36 (background and style changes). At a threshold of
+  0.6 the penalty also hit those legitimate edits and the policy drifted toward copying the
+  source (near-copies with similarity > 0.97 went from 43% to 61% in 10 steps). At 0.4 it only
+  catches outputs that drop the source.
+
+Measured on 4 GPUs with the V1 sync trainer (24 edits x 16 images per update, 10 rollout steps,
+512px), 243 fixed dev edits with a fixed seed:
+
+| Step | Validation reward | PickScore / 26 | DINOv2 source similarity | Paired win rate vs step 0 |
+|------|-------------------|----------------|--------------------------|---------------------------|
+| 0    | 0.764             | 0.766          | 0.893                    | -                         |
+| 10   | 0.769             | 0.771          | 0.874                    | 69%                       |
+| 30   | 0.777             | 0.778          | 0.866                    | 82%                       |
+| 60   | 0.781             | 0.784          | 0.818                    | 87%                       |
+
+At step 60 the policy also beats the CFG-4 base model on the same edits and seeds (0.781 vs
+0.766, paired 95% CI of the difference [+0.012, +0.020], 77% wins) at the same source
+similarity, and the share of near-copies falls from 43% to 21%. The share of outputs below the
+hinge rises from 2% at step 30 to 6% at step 60 (CFG 4: 11%); inspect images before training
+longer. A training step takes about 15 minutes and a validation pass about 5 minutes.
 
 ## Tests
 
