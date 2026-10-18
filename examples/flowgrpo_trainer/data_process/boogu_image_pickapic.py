@@ -69,7 +69,7 @@ def split_captions(
     return train, validation
 
 
-def build_split(captions: list[str], split: str) -> datasets.Dataset:
+def build_split(captions: list[str], split: str, source: str = DEFAULT_DATASET) -> datasets.Dataset:
     rows = []
     for index, caption in enumerate(captions):
         rows.append(
@@ -88,7 +88,7 @@ def build_split(captions: list[str], split: str) -> datasets.Dataset:
                 "extra_info": {
                     "split": split,
                     "index": index,
-                    "source": DEFAULT_DATASET,
+                    "source": source,
                     "raw_prompt": caption,
                 },
             }
@@ -129,8 +129,8 @@ def main() -> None:
         validation_size=args.validation_size,
         train_size=train_size,
     )
-    train_dataset = build_split(train_captions, "train")
-    validation_dataset = build_split(validation_captions, "validation")
+    train_dataset = build_split(train_captions, "train", source=args.dataset)
+    validation_dataset = build_split(validation_captions, "validation", source=args.dataset)
 
     output_dir = Path(args.output_dir).expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
