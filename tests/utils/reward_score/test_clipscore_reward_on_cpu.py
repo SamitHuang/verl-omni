@@ -57,32 +57,39 @@ class _FakeInferencer:
         return torch.tensor([float(image.getpixel((0, 0))[0]) * scale_factor for image in images])
 
 
-@pytest.mark.asyncio
-async def test_compute_score_batches_burst_requests(monkeypatch) -> None:
+@pytest.fixture
+def fake_inferencer(monkeypatch):
     inferencer = _FakeInferencer()
-    queue = asyncio.Queue()
     monkeypatch.setattr(clipscore_reward, "_inferencer", inferencer)
     monkeypatch.setattr(clipscore_reward, "_inferencer_key", ("cpu", "clip"))
-    monkeypatch.setattr(clipscore_reward, "_score_queue", queue)
-    monkeypatch.setattr(clipscore_reward, "_consumer_started", True)
-    monkeypatch.setattr(clipscore_reward, "_consumer_task", asyncio.create_task(clipscore_reward._consumer_loop()))
+    for name in ("_score_queue", "_consumer_task", "_consumer_lock", "_state_loop"):
+        monkeypatch.setattr(clipscore_reward, name, None)
+    return inferencer
 
-    scores = await asyncio.gather(
-        *(
-            clipscore_reward.compute_score_clipscore(
-                data_source="test",
-                solution_image=torch.full((3, 1, 1), index, dtype=torch.uint8),
-                ground_truth="shared prompt",
-                extra_info={"media_kind": "image"},
-                device="cpu",
-                model_path="clip",
-                scale_factor=2.0,
-            )
-            for index in range(4)
-        )
+
+async def _score(index: int, scale_factor: float = 2.0) -> dict[str, float]:
+    return await clipscore_reward.compute_score_clipscore(
+        data_source="test",
+        solution_image=torch.full((3, 1, 1), index, dtype=torch.uint8),
+        ground_truth="shared prompt",
+        extra_info={"media_kind": "image"},
+        device="cpu",
+        model_path="clip",
+        scale_factor=scale_factor,
     )
-    queue.put_nowait((None, None, None, None))
+
+
+async def _stop_consumer() -> None:
+    clipscore_reward._score_queue.put_nowait((None, None, None, None))
     await clipscore_reward._consumer_task
+
+
+@pytest.mark.asyncio
+async def test_compute_score_batches_burst_requests(fake_inferencer) -> None:
+    inferencer = fake_inferencer
+
+    scores = await asyncio.gather(*(_score(index) for index in range(4)))
+    await _stop_consumer()
 
     assert scores == [
         {"score": 0.0, "clipscore_raw": 0.0},
@@ -92,3 +99,22 @@ async def test_compute_score_batches_burst_requests(monkeypatch) -> None:
     ]
     assert len(inferencer.batches) == 1
     assert inferencer.batches[0][0] == ["shared prompt"] * 4
+
+
+def test_compute_score_serves_requests_from_successive_event_loops(fake_inferencer) -> None:
+    async def score_once(index):
+        return await asyncio.wait_for(_score(index), timeout=5)
+
+    assert asyncio.run(score_once(1)) == {"score": 2.0, "clipscore_raw": 2.0}
+    assert asyncio.run(score_once(2)) == {"score": 4.0, "clipscore_raw": 4.0}
+
+
+@pytest.mark.asyncio
+async def test_compute_score_restarts_a_stopped_consumer(fake_inferencer) -> None:
+    assert await _score(1) == {"score": 2.0, "clipscore_raw": 2.0}
+    clipscore_reward._consumer_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await clipscore_reward._consumer_task
+
+    assert await asyncio.wait_for(_score(3), timeout=5) == {"score": 6.0, "clipscore_raw": 6.0}
+    await _stop_consumer()

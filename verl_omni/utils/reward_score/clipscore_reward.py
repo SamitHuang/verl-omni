@@ -22,6 +22,7 @@ are combined into local inference batches.
 import asyncio
 import logging
 import os
+import threading
 
 import numpy as np
 import torch
@@ -37,10 +38,13 @@ _MAX_BATCH_SIZE = 16
 
 _inferencer = None
 _inferencer_key = None
-_score_queue = asyncio.Queue()
+_inferencer_lock = threading.Lock()
+# Queues, locks and tasks belong to one event loop; the reward manager may call
+# ``asyncio.run`` more than once per process, so they are rebuilt per loop.
+_score_queue = None
 _consumer_task = None
-_consumer_started = False
-_consumer_lock = asyncio.Lock()
+_consumer_lock = None
+_state_loop = None
 
 
 def _feature_tensor(features):
@@ -174,7 +178,14 @@ async def _consumer_loop():
                 break
             requests.append(request)
 
-        results = await loop.run_in_executor(None, _score_batch, requests)
+        try:
+            results = await loop.run_in_executor(None, _score_batch, requests)
+        except asyncio.CancelledError:
+            for _, _, future, _ in requests:
+                future.cancel()
+            raise
+        except Exception as error:
+            results = [error] * len(requests)
         for (_, _, future, _), result in zip(requests, results, strict=True):
             if future.done():
                 continue
@@ -186,18 +197,36 @@ async def _consumer_loop():
             return
 
 
-async def _ensure_consumer(device: str | None, model_path: str):
-    global _inferencer, _inferencer_key, _consumer_started, _consumer_task
+def _bind_loop_state() -> None:
+    global _score_queue, _consumer_task, _consumer_lock, _state_loop
+    loop = asyncio.get_running_loop()
+    if _state_loop is not loop:
+        _score_queue = asyncio.Queue()
+        _consumer_lock = asyncio.Lock()
+        _consumer_task = None
+        _state_loop = loop
+
+
+def _load_inferencer(device: str | None, model_path: str) -> None:
+    global _inferencer, _inferencer_key
     key = (device, model_path)
-    if _consumer_started:
-        if _inferencer_key != key:
-            raise RuntimeError(f"CLIPScore is already loaded with {_inferencer_key}, cannot switch to {key}")
-        return
-    async with _consumer_lock:
-        if not _consumer_started:
+    with _inferencer_lock:
+        if _inferencer is None:
             _inferencer = _CLIPScoreInferencer(device=device, model_path=model_path)
             _inferencer_key = key
-            _consumer_started = True
+        elif _inferencer_key != key:
+            raise RuntimeError(f"CLIPScore is already loaded with {_inferencer_key}, cannot switch to {key}")
+
+
+async def _ensure_consumer(device: str | None, model_path: str):
+    global _consumer_task
+    _bind_loop_state()
+    if _consumer_task is not None and not _consumer_task.done():
+        _load_inferencer(device, model_path)
+        return
+    async with _consumer_lock:
+        _load_inferencer(device, model_path)
+        if _consumer_task is None or _consumer_task.done():
             _consumer_task = asyncio.create_task(_consumer_loop())
 
 

@@ -24,11 +24,16 @@ import gc
 
 import torch
 
-from .clipscore_reward import _CLIPScoreInferencer, _decoded_reward_image, _pairwise_clipscore, _to_rgb_image
-from .hpsv2_reward import _HPSv2Scorer
-from .pickscore_reward import _MODEL_PATH as PICKSCORE_MODEL_PATH
-from .pickscore_reward import _PROCESSOR_PATH as PICKSCORE_PROCESSOR_PATH
-from .pickscore_reward import _pairwise_pickscore, _PickScoreInferencer
+from verl_omni.utils.reward_score.clipscore_reward import (
+    _CLIPScoreInferencer,
+    _decoded_reward_image,
+    _pairwise_clipscore,
+    _to_rgb_image,
+)
+from verl_omni.utils.reward_score.hpsv2_reward import _HPSv2Scorer
+from verl_omni.utils.reward_score.pickscore_reward import _MODEL_PATH as PICKSCORE_MODEL_PATH
+from verl_omni.utils.reward_score.pickscore_reward import _PROCESSOR_PATH as PICKSCORE_PROCESSOR_PATH
+from verl_omni.utils.reward_score.pickscore_reward import _pairwise_pickscore, _PickScoreInferencer
 
 _CLIPSCORE_MODEL_PATH = "openai/clip-vit-large-patch14"
 
@@ -134,7 +139,11 @@ class PreferenceMixNativeModel:
                 for (*_, future), output in zip(requests, outputs, strict=True):
                     if not future.done():
                         future.set_result(output)
-            except BaseException as error:
+            except asyncio.CancelledError:
+                for *_, future in requests:
+                    future.cancel()
+                raise
+            except Exception as error:
                 for *_, future in requests:
                     if not future.done():
                         future.set_exception(error)
@@ -191,8 +200,8 @@ async def compute_score_preference_mix(
     output = outputs[0]
 
     hpsv2 = torch.nn.functional.cosine_similarity(
-        output["hpsv2_text_embedding"].unsqueeze(0),
-        output["hpsv2_image_embedding"].unsqueeze(0),
+        output["hpsv2_text_embedding"].unsqueeze(0).float(),
+        output["hpsv2_image_embedding"].unsqueeze(0).float(),
         dim=-1,
     ).item()
     pickscore = _pairwise_pickscore(

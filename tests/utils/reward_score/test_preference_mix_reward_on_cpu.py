@@ -14,11 +14,14 @@
 
 """CPU tests for the composite image preference reward."""
 
+import asyncio
+import threading
+
 import pytest
 import torch
 from PIL import Image
 
-from verl_omni.utils.reward_score.preference_mix_reward import compute_score_preference_mix
+from verl_omni.utils.reward_score.preference_mix_reward import PreferenceMixNativeModel, compute_score_preference_mix
 
 
 class _FakeRewardModel:
@@ -86,3 +89,66 @@ async def test_preference_mix_rejects_undeclared_media() -> None:
             extra_info={},
             reward_model=_FakeRewardModel(),
         )
+
+
+class _HalfPrecisionRewardModel:
+    def __init__(self):
+        generator = torch.Generator().manual_seed(0)
+        self.text = torch.randn(1024, generator=generator).half()
+        self.image = (self.text.float() + torch.randn(1024, generator=generator)).half()
+
+    async def infer(self, prompts, images):
+        return [
+            {
+                "hpsv2_text_embedding": self.text,
+                "hpsv2_image_embedding": self.image,
+                "pickscore_text_embedding": torch.tensor([1.0, 0.0]),
+                "pickscore_image_embedding": torch.tensor([0.0, 1.0]),
+                "pickscore_logit_scale": torch.tensor(26.0),
+                "clipscore_text_embedding": torch.tensor([1.0, 0.0]),
+                "clipscore_image_embedding": torch.tensor([0.8, 0.6]),
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_preference_mix_hpsv2_cosine_is_float32_for_half_embeddings() -> None:
+    model = _HalfPrecisionRewardModel()
+
+    result = await compute_score_preference_mix(
+        data_source="test",
+        solution_image=_IMAGE,
+        ground_truth="a red cube",
+        extra_info=_IMAGE_INFO,
+        reward_model=model,
+    )
+
+    expected = torch.nn.functional.cosine_similarity(model.text.float(), model.image.float(), dim=0).item()
+    assert result["hpsv2_raw"] == pytest.approx(expected, abs=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_preference_mix_consumer_cancellation_cancels_pending_requests() -> None:
+    model = PreferenceMixNativeModel.__new__(PreferenceMixNativeModel)
+    model.max_batch_size = 16
+    model._queue = asyncio.Queue()
+    model._consumer_task = None
+    model._consumer_lock = asyncio.Lock()
+    model._closed = False
+    started, release = threading.Event(), threading.Event()
+
+    def blocking_infer(requests):
+        started.set()
+        release.wait(timeout=5)
+        return [{} for _ in requests]
+
+    model._infer_requests = blocking_infer
+    request = asyncio.create_task(model.infer(["a red cube"], [Image.new("RGB", (2, 2))]))
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+
+    model._consumer_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+    assert model._consumer_task.cancelled()
+    release.set()

@@ -107,7 +107,8 @@ class _HPSv2Scorer:
 
     def score_batch(self, images: list[Image.Image], prompts: list[str]) -> torch.Tensor:
         output = self.infer(images, prompts)
-        return (output["image_embeddings"] * output["text_embeddings"]).sum(dim=-1)
+        # The encoders run under autocast; a half-precision product rounds the score.
+        return (output["image_embeddings"].float() * output["text_embeddings"].float()).sum(dim=-1)
 
     def score(self, image: Image.Image, prompt: str) -> float:
         return float(self.score_batch([image], [prompt]).item())
