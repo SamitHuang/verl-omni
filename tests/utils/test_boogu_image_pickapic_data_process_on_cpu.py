@@ -59,6 +59,13 @@ def test_build_split_uses_boogu_t2i_and_empty_negative_templates() -> None:
     ]
     assert row["reward_model"]["ground_truth"] == caption
     assert row["data_source"] == "pickapic_v1"
+    assert row["extra_info"]["source"] == converter.DEFAULT_DATASET
+
+
+def test_build_split_records_the_selected_source_dataset() -> None:
+    row = converter.build_split(["a red cube"], "train", source="/data/my_pickapic_export")[0]
+
+    assert row["extra_info"]["source"] == "/data/my_pickapic_export"
 
 
 def test_split_requires_enough_unique_prompts() -> None:

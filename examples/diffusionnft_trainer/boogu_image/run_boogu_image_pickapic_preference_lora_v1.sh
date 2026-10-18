@@ -99,7 +99,6 @@ TRAIN_BATCH_SIZE=${TRAIN_BATCH_SIZE:-24}
 ROLLOUT_N=${ROLLOUT_N:-16}
 TRAIN_MAX_SAMPLES=${TRAIN_MAX_SAMPLES:-5760}
 VAL_MAX_SAMPLES=${VAL_MAX_SAMPLES:-256}
-VALIDATION_PROFILES=${VALIDATION_PROFILES:-}
 TOTAL_TRAIN_STEPS=${TOTAL_TRAIN_STEPS:-60}
 DATA_SEED=${DATA_SEED:-42}
 VAL_SEED=${VAL_SEED:-42}
@@ -126,17 +125,12 @@ EXPERIMENT_NAME=${EXPERIMENT_NAME:-boogu_image_pickapic_hpsv2_pickscore_clipscor
 OUTPUT_DIR=${OUTPUT_DIR:-$WORKSPACE/outputs/$EXPERIMENT_NAME}
 mkdir -p "$OUTPUT_DIR/checkpoints" "$OUTPUT_DIR/validation"
 
-extra_args=()
-if [[ -n "$VALIDATION_PROFILES" ]]; then
-    extra_args+=("+trainer.validation_profiles=$VALIDATION_PROFILES")
-fi
-
 echo "[workload] groups=$TRAIN_BATCH_SIZE group_size=$ROLLOUT_N images/update=$((TRAIN_BATCH_SIZE * ROLLOUT_N))" >&2
 echo "[resources] $TOTAL_GPUS GPUs shared synchronously by actor/rollout and reward replicas" >&2
 
 python3 -m verl_omni.trainer.main_diffusion_v1 \
-    data.train_files=$TRAIN_FILES \
-    data.val_files=$VAL_FILES \
+    "data.train_files=$TRAIN_FILES" \
+    "data.val_files=$VAL_FILES" \
     data.train_max_samples=$TRAIN_MAX_SAMPLES \
     data.val_max_samples=$VAL_MAX_SAMPLES \
     data.train_batch_size=$TRAIN_BATCH_SIZE \
@@ -144,8 +138,8 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     data.seed=$DATA_SEED \
     actor_rollout_ref.model.algorithm=diffusion_nft \
     actor_rollout_ref.model.model_type=diffusion_nft_model \
-    actor_rollout_ref.model.path=$model_dir \
-    actor_rollout_ref.model.tokenizer_path=$TOKENIZER_PATH \
+    "actor_rollout_ref.model.path=$model_dir" \
+    "actor_rollout_ref.model.tokenizer_path=$TOKENIZER_PATH" \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.model.attn_backend=$MODEL_ATTN_BACKEND \
     actor_rollout_ref.model.lora_rank=64 \
@@ -231,8 +225,8 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     trainer.logger='["console","wandb"]' \
     trainer.project_name=diffusion_nft \
     trainer.experiment_name=$EXPERIMENT_NAME \
-    trainer.default_local_dir=$OUTPUT_DIR/checkpoints \
-    trainer.validation_data_dir=$OUTPUT_DIR/validation \
+    "trainer.default_local_dir=$OUTPUT_DIR/checkpoints" \
+    "trainer.validation_data_dir=$OUTPUT_DIR/validation" \
     trainer.log_val_generations=8 \
     trainer.val_before_train=True \
     trainer.n_gpus_per_node=$NUM_GPUS_ACTOR_ROLLOUT \
@@ -244,4 +238,4 @@ python3 -m verl_omni.trainer.main_diffusion_v1 \
     trainer.max_actor_ckpt_to_keep=$MAX_ACTOR_CKPT_TO_KEEP \
     trainer.resume_mode=auto \
     trainer.use_v1=true \
-    trainer.v1.trainer_mode=sync "${extra_args[@]}" "$@"
+    trainer.v1.trainer_mode=sync "$@"

@@ -134,7 +134,11 @@ into the recipe:
 
 ### Preference reward (HPSv2.1 + PickScore + CLIPScore)
 
+HPSv2.1 needs `open_clip_torch`, which is not a verl-omni dependency. Version 3.3.0 has been
+validated with this recipe:
+
 ```bash
+pip install open_clip_torch==3.3.0
 python examples/flowgrpo_trainer/data_process/boogu_image_pickapic.py
 HPSV2_PRETRAINED_PATH=/path/to/open_clip_pytorch_model.bin \
 CUSTOM_REWARD_MODEL_PATH=/path/to/HPS_v2.1_compressed.pt \
