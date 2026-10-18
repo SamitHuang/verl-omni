@@ -21,6 +21,7 @@ formulas and 1:1:1 weighted aggregation.
 
 import asyncio
 import gc
+from concurrent.futures import ThreadPoolExecutor
 
 import torch
 
@@ -78,6 +79,8 @@ class PreferenceMixNativeModel:
             model_path=clipscore_model_path,
         )
         self.max_batch_size = max_batch_size
+        # Owned so close() can wait for a batch whose awaiting consumer was cancelled.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="preference-mix")
         self._queue = asyncio.Queue()
         self._consumer_task = None
         self._consumer_lock = asyncio.Lock()
@@ -135,7 +138,7 @@ class PreferenceMixNativeModel:
                 requests.append(request)
 
             try:
-                outputs = await loop.run_in_executor(None, self._infer_requests, requests)
+                outputs = await loop.run_in_executor(self._executor, self._infer_requests, requests)
                 for (*_, future), output in zip(requests, outputs, strict=True):
                     if not future.done():
                         future.set_result(output)
@@ -171,6 +174,7 @@ class PreferenceMixNativeModel:
             await self._queue.put((None, None, None))
             await self._consumer_task
         self._consumer_task = None
+        await asyncio.to_thread(self._executor.shutdown, wait=True)
         for name in ("hpsv2", "pickscore", "clipscore"):
             if hasattr(self, name):
                 delattr(self, name)

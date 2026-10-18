@@ -128,18 +128,25 @@ async def test_preference_mix_hpsv2_cosine_is_float32_for_half_embeddings() -> N
 
 
 @pytest.mark.asyncio
-async def test_preference_mix_consumer_cancellation_cancels_pending_requests() -> None:
+async def test_preference_mix_cancellation_cancels_requests_and_close_waits_for_inference() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
     model = PreferenceMixNativeModel.__new__(PreferenceMixNativeModel)
+    model.device = torch.device("cpu")
     model.max_batch_size = 16
+    model._executor = ThreadPoolExecutor(max_workers=1)
     model._queue = asyncio.Queue()
     model._consumer_task = None
     model._consumer_lock = asyncio.Lock()
     model._closed = False
+    model.hpsv2 = model.pickscore = model.clipscore = object()
     started, release = threading.Event(), threading.Event()
+    encoders_seen_at_end = []
 
     def blocking_infer(requests):
         started.set()
         release.wait(timeout=5)
+        encoders_seen_at_end.append(hasattr(model, "clipscore"))
         return [{} for _ in requests]
 
     model._infer_requests = blocking_infer
@@ -151,4 +158,11 @@ async def test_preference_mix_consumer_cancellation_cancels_pending_requests() -
     with pytest.raises(asyncio.CancelledError):
         await request
     assert model._consumer_task.cancelled()
+
+    closing = asyncio.create_task(model.close())
+    await asyncio.sleep(0.05)
+    assert not closing.done()
     release.set()
+    await closing
+    assert encoders_seen_at_end == [True]
+    assert not hasattr(model, "clipscore")
