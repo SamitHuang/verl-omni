@@ -19,11 +19,12 @@ import os
 from contextlib import nullcontext
 
 import aiohttp
-import numpy as np
 import torch
 from PIL import Image
 from transformers import CLIPModel, CLIPProcessor
 from verl.utils.device import get_device_id, get_device_name
+
+from verl_omni.utils.reward_score.image_preference_utils import clip_feature_tensor, decoded_reward_image, to_rgb_image
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "INFO"))
@@ -59,18 +60,6 @@ async def _await_owned(awaitable):
             pass
         raise asyncio.CancelledError
     return task.result()
-
-
-def _feature_tensor(features):
-    if isinstance(features, torch.Tensor):
-        return features
-    if hasattr(features, "image_embeds") and features.image_embeds is not None:
-        return features.image_embeds
-    if hasattr(features, "text_embeds") and features.text_embeds is not None:
-        return features.text_embeds
-    if hasattr(features, "pooler_output") and features.pooler_output is not None:
-        return features.pooler_output
-    raise TypeError(f"Unsupported CLIP feature return type: {type(features)!r}")
 
 
 def _pairwise_pickscore(
@@ -129,8 +118,8 @@ class _PickScoreInferencer:
         )
         text_inputs = {k: v.to(device=self.device) for k, v in text_inputs.items()}
 
-        image_embs = _feature_tensor(self.model.get_image_features(**image_inputs))
-        text_embs = _feature_tensor(self.model.get_text_features(**text_inputs))
+        image_embs = clip_feature_tensor(self.model.get_image_features(**image_inputs))
+        text_embs = clip_feature_tensor(self.model.get_text_features(**text_inputs))
         text_embs = text_embs[prompt_indices]
 
         return {
@@ -331,34 +320,6 @@ class PickScoreNativeModel:
                 empty_cache()
 
 
-def _to_pil_hwc(image) -> Image.Image:
-    if isinstance(image, torch.Tensor):
-        image = image.cpu().numpy()
-    if isinstance(image, np.ndarray):
-        if image.ndim == 3 and image.shape[0] in (1, 3):
-            image = image.transpose(1, 2, 0)
-        image = Image.fromarray(image)
-    assert isinstance(image, Image.Image)
-    return image
-
-
-def _decoded_pickscore_image(solution_image, extra_info: dict | None) -> Image.Image:
-    """Select one explicitly declared decoded image.
-
-    Named artifacts and ``media_kind`` reject latent responses. The native
-    replica dispatch supplies an already-converted image, so it uses the
-    internal batching path instead of this declaration check.
-    """
-    extra_info = extra_info or {}
-
-    from verl_omni.utils.reward_score.reward_utils import visual_reward_frames
-
-    frames = visual_reward_frames(solution_image, extra_info)
-    if len(frames) != 1:
-        raise ValueError("PickScore requires a single decoded image")
-    return _to_pil_hwc(frames[0])
-
-
 def _score_batch(requests) -> list[float | Exception]:
     """Convert and score a batch in a thread so the event loop is never blocked."""
     results = [None] * len(requests)
@@ -368,7 +329,7 @@ def _score_batch(requests) -> list[float | Exception]:
 
     for index, (prompt, solution_image, _) in enumerate(requests):
         try:
-            images.append(_to_pil_hwc(solution_image))
+            images.append(to_rgb_image(solution_image))
             prompts.append(prompt)
             valid_indices.append(index)
         except Exception as e:
@@ -441,7 +402,7 @@ async def compute_score_pickscore(
     device: str | None = None,
     **kwargs,
 ) -> dict:
-    solution_image = _decoded_pickscore_image(solution_image, extra_info)
+    solution_image = decoded_reward_image(solution_image, extra_info, scorer="PickScore")
     await _ensure_consumer(device)
 
     prompt = ground_truth if ground_truth else ""
@@ -464,7 +425,7 @@ async def compute_score_pickscore_native(
     """Compute PickScore from outputs produced by a native named reward model."""
     del data_source
     prompt = ground_truth or ""
-    image = _decoded_pickscore_image(solution_image, extra_info)
+    image = decoded_reward_image(solution_image, extra_info, scorer="PickScore")
     outputs = await reward_model.infer(prompts=[prompt], images=[image])
     output = outputs[0]
     raw_score = _pairwise_pickscore(
@@ -494,7 +455,7 @@ async def compute_score_pickscore_engine(
     PickScore checkpoint's parameter.
     """
     del data_source
-    image = _decoded_pickscore_image(solution_image, extra_info)
+    image = decoded_reward_image(solution_image, extra_info, scorer="PickScore")
     if not reward_router_address:
         raise ValueError("PickScore engine reward requires reward_router_address")
     if not model_name:

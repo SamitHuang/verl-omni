@@ -26,7 +26,7 @@ def test_pairwise_clipscore_clamps_negative_cosine() -> None:
     text = torch.tensor([[1.0, 0.0], [1.0, 0.0]])
     image = torch.tensor([[1.0, 0.0], [-1.0, 0.0]])
 
-    score = clipscore_reward._pairwise_clipscore(text, image)
+    score = clipscore_reward.pairwise_clipscore(text, image)
 
     torch.testing.assert_close(score, torch.tensor([2.5, 0.0]))
 
@@ -40,7 +40,7 @@ def test_pairwise_scores_are_float32_for_bf16_embeddings(pairwise) -> None:
     image = (text.float() + torch.randn(64, 768, generator=generator)).bfloat16()
 
     if pairwise == "clipscore":
-        score = clipscore_reward._pairwise_clipscore(text, image)
+        score = clipscore_reward.pairwise_clipscore(text, image)
     else:
         score = pickscore_reward._pairwise_pickscore(text, image, torch.tensor(100.0, dtype=torch.bfloat16))
 
@@ -62,8 +62,8 @@ def fake_inferencer(monkeypatch):
     inferencer = _FakeInferencer()
     monkeypatch.setattr(clipscore_reward, "_inferencer", inferencer)
     monkeypatch.setattr(clipscore_reward, "_inferencer_key", ("cpu", "clip"))
-    for name in ("_score_queue", "_consumer_task", "_consumer_lock", "_state_loop"):
-        monkeypatch.setattr(clipscore_reward, name, None)
+    monkeypatch.setattr(clipscore_reward, "_batcher", None)
+    monkeypatch.setattr(clipscore_reward, "_batcher_loop", None)
     return inferencer
 
 
@@ -80,8 +80,7 @@ async def _score(index: int, scale_factor: float = 2.0) -> dict[str, float]:
 
 
 async def _stop_consumer() -> None:
-    clipscore_reward._score_queue.put_nowait((None, None, None, None))
-    await clipscore_reward._consumer_task
+    await clipscore_reward._batcher.stop()
 
 
 @pytest.mark.asyncio
@@ -112,9 +111,10 @@ def test_compute_score_serves_requests_from_successive_event_loops(fake_inferenc
 @pytest.mark.asyncio
 async def test_compute_score_restarts_a_stopped_consumer(fake_inferencer) -> None:
     assert await _score(1) == {"score": 2.0, "clipscore_raw": 2.0}
-    clipscore_reward._consumer_task.cancel()
+    consumer = clipscore_reward._batcher.task
+    consumer.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await clipscore_reward._consumer_task
+        await consumer
 
     assert await asyncio.wait_for(_score(3), timeout=5) == {"score": 6.0, "clipscore_raw": 6.0}
     await _stop_consumer()

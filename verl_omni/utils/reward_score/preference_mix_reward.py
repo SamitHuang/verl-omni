@@ -25,18 +25,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 import torch
 
-from verl_omni.utils.reward_score.clipscore_reward import (
-    _CLIPScoreInferencer,
-    _decoded_reward_image,
-    _pairwise_clipscore,
-    _to_rgb_image,
-)
+from verl_omni.utils.reward_score.clipscore_reward import CLIPSCORE_MODEL_PATH, CLIPScoreInferencer, pairwise_clipscore
 from verl_omni.utils.reward_score.hpsv2_reward import _HPSv2Scorer
+from verl_omni.utils.reward_score.image_preference_utils import RequestBatcher, decoded_reward_image, to_rgb_image
 from verl_omni.utils.reward_score.pickscore_reward import _MODEL_PATH as PICKSCORE_MODEL_PATH
 from verl_omni.utils.reward_score.pickscore_reward import _PROCESSOR_PATH as PICKSCORE_PROCESSOR_PATH
 from verl_omni.utils.reward_score.pickscore_reward import _pairwise_pickscore, _PickScoreInferencer
-
-_CLIPSCORE_MODEL_PATH = "openai/clip-vit-large-patch14"
 
 
 def _resolve_dtype(dtype: str | torch.dtype) -> torch.dtype:
@@ -59,11 +53,12 @@ class PreferenceMixNativeModel:
         dtype: str | torch.dtype = "bfloat16",
         pickscore_model_path: str = PICKSCORE_MODEL_PATH,
         pickscore_processor_path: str = PICKSCORE_PROCESSOR_PATH,
-        clipscore_model_path: str = _CLIPSCORE_MODEL_PATH,
+        clipscore_model_path: str = CLIPSCORE_MODEL_PATH,
         max_batch_size: int = 16,
     ):
-        if max_batch_size <= 0:
-            raise ValueError(f"max_batch_size must be positive, got {max_batch_size}")
+        # Owned so close() can wait for a batch whose awaiting consumer was cancelled.
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="preference-mix")
+        self._batcher = RequestBatcher(self._infer_requests, max_batch_size=max_batch_size, executor=self._executor)
         self.device = torch.device(device or "cpu")
         model_dtype = _resolve_dtype(dtype)
         self.hpsv2 = _HPSv2Scorer(hpsv2_pretrained_path, hpsv2_checkpoint_path, self.device)
@@ -73,33 +68,16 @@ class PreferenceMixNativeModel:
             model_path=pickscore_model_path,
             processor_path=pickscore_processor_path,
         )
-        self.clipscore = _CLIPScoreInferencer(
+        self.clipscore = CLIPScoreInferencer(
             device=self.device,
             dtype=model_dtype,
             model_path=clipscore_model_path,
         )
-        self.max_batch_size = max_batch_size
-        # Owned so close() can wait for a batch whose awaiting consumer was cancelled.
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="preference-mix")
-        self._queue = asyncio.Queue()
-        self._consumer_task = None
-        self._consumer_lock = asyncio.Lock()
         self._closed = False
 
-    async def _ensure_consumer(self) -> None:
-        if self._closed:
-            raise RuntimeError("Preference reward model is closed")
-        if self._consumer_task is not None and not self._consumer_task.done():
-            return
-        async with self._consumer_lock:
-            if self._closed:
-                raise RuntimeError("Preference reward model is closed")
-            if self._consumer_task is None or self._consumer_task.done():
-                self._consumer_task = asyncio.create_task(self._consumer_loop())
-
     def _infer_requests(self, requests) -> list[dict[str, torch.Tensor]]:
-        prompts = [prompt for prompt, _, _ in requests]
-        images = [_to_rgb_image(image) for _, image, _ in requests]
+        prompts = [prompt for prompt, _ in requests]
+        images = [to_rgb_image(image) for _, image in requests]
         hpsv2 = self.hpsv2.infer(images, prompts)
         pickscore = self.pickscore.infer(prompts, images)
         clipscore = self.clipscore.infer(prompts, images)
@@ -117,63 +95,18 @@ class PreferenceMixNativeModel:
             for index in range(len(requests))
         ]
 
-    async def _consumer_loop(self) -> None:
-        loop = asyncio.get_running_loop()
-        while True:
-            request = await self._queue.get()
-            if request[0] is None:
-                return
-
-            requests = [request]
-            should_stop = False
-            await asyncio.sleep(0)
-            while len(requests) < self.max_batch_size:
-                try:
-                    request = self._queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                if request[0] is None:
-                    should_stop = True
-                    break
-                requests.append(request)
-
-            try:
-                outputs = await loop.run_in_executor(self._executor, self._infer_requests, requests)
-                for (*_, future), output in zip(requests, outputs, strict=True):
-                    if not future.done():
-                        future.set_result(output)
-            except asyncio.CancelledError:
-                for *_, future in requests:
-                    future.cancel()
-                raise
-            except Exception as error:
-                for *_, future in requests:
-                    if not future.done():
-                        future.set_exception(error)
-            if should_stop:
-                return
-
     async def infer(self, prompts, images):
         prompts = list(prompts)
         images = list(images)
         if len(prompts) != len(images):
             raise ValueError("Preference reward prompts and images must have the same length")
-        await self._ensure_consumer()
-
-        loop = asyncio.get_running_loop()
-        futures = []
-        for prompt, image in zip(prompts, images, strict=True):
-            future = loop.create_future()
-            futures.append(future)
-            await self._queue.put((prompt, image, future))
-        return await asyncio.gather(*futures)
+        if self._closed:
+            raise RuntimeError("Preference reward model is closed")
+        return await self._batcher.submit(list(zip(prompts, images, strict=True)))
 
     async def close(self) -> None:
         self._closed = True
-        if self._consumer_task is not None and not self._consumer_task.done():
-            await self._queue.put((None, None, None))
-            await self._consumer_task
-        self._consumer_task = None
+        await self._batcher.stop()
         await asyncio.to_thread(self._executor.shutdown, wait=True)
         for name in ("hpsv2", "pickscore", "clipscore"):
             if hasattr(self, name):
@@ -199,7 +132,7 @@ async def compute_score_preference_mix(
 ) -> dict[str, float]:
     """Compute and combine the three preference scores for one generated image."""
     del data_source
-    image = _decoded_reward_image(solution_image, extra_info)
+    image = decoded_reward_image(solution_image, extra_info, scorer="Preference-mix reward")
     outputs = await reward_model.infer(prompts=[ground_truth or ""], images=[image])
     output = outputs[0]
 
@@ -214,7 +147,7 @@ async def compute_score_preference_mix(
         output["pickscore_logit_scale"],
         score_divisor=pickscore_divisor,
     ).item()
-    clipscore = _pairwise_clipscore(
+    clipscore = pairwise_clipscore(
         output["clipscore_text_embedding"].unsqueeze(0),
         output["clipscore_image_embedding"].unsqueeze(0),
         scale_factor=clipscore_scale,

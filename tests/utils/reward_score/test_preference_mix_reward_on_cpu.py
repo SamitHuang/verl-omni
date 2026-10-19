@@ -21,6 +21,7 @@ import pytest
 import torch
 from PIL import Image
 
+from verl_omni.utils.reward_score.image_preference_utils import RequestBatcher
 from verl_omni.utils.reward_score.preference_mix_reward import PreferenceMixNativeModel, compute_score_preference_mix
 
 
@@ -133,11 +134,7 @@ async def test_preference_mix_cancellation_cancels_requests_and_close_waits_for_
 
     model = PreferenceMixNativeModel.__new__(PreferenceMixNativeModel)
     model.device = torch.device("cpu")
-    model.max_batch_size = 16
     model._executor = ThreadPoolExecutor(max_workers=1)
-    model._queue = asyncio.Queue()
-    model._consumer_task = None
-    model._consumer_lock = asyncio.Lock()
     model._closed = False
     model.hpsv2 = model.pickscore = model.clipscore = object()
     started, release = threading.Event(), threading.Event()
@@ -149,15 +146,16 @@ async def test_preference_mix_cancellation_cancels_requests_and_close_waits_for_
         encoders_seen_at_end.append(hasattr(model, "clipscore"))
         return [{} for _ in requests]
 
-    model._infer_requests = blocking_infer
+    model._batcher = RequestBatcher(blocking_infer, max_batch_size=16, executor=model._executor)
     request = asyncio.create_task(model.infer(["a red cube"], [Image.new("RGB", (2, 2))]))
     while not started.is_set():
         await asyncio.sleep(0.01)
 
-    model._consumer_task.cancel()
+    consumer = model._batcher.task
+    consumer.cancel()
     with pytest.raises(asyncio.CancelledError):
         await request
-    assert model._consumer_task.cancelled()
+    assert consumer.cancelled()
 
     closing = asyncio.create_task(model.close())
     await asyncio.sleep(0.05)
