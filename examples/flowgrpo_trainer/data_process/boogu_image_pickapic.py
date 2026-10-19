@@ -113,16 +113,16 @@ def main() -> None:
     parser.add_argument("--validation-size", type=int, default=256)
     parser.add_argument("--num-proc", type=int, default=16)
     args = parser.parse_args()
+    if args.train_size < 0:
+        parser.error(f"--train-size must be non-negative, got {args.train_size}")
+    if args.validation_size <= 0:
+        parser.error(f"--validation-size must be positive, got {args.validation_size}")
 
     source = datasets.load_dataset(args.dataset, split=args.source_split, num_proc=args.num_proc)
     if args.caption_column not in source.column_names:
         raise KeyError(f"Caption column {args.caption_column!r} is absent; available columns: {source.column_names}.")
 
     train_size = args.train_size or None
-    if args.train_size < 0:
-        raise ValueError(f"train-size must be non-negative, got {args.train_size}")
-    if args.validation_size <= 0:
-        raise ValueError(f"validation-size must be positive, got {args.validation_size}")
     train_captions, validation_captions = split_captions(
         source[args.caption_column],
         seed=args.seed,
