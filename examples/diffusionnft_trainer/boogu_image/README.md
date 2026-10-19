@@ -145,8 +145,9 @@ CUSTOM_REWARD_MODEL_PATH=/path/to/HPS_v2.1_compressed.pt \
 bash examples/diffusionnft_trainer/boogu_image/run_boogu_image_pickapic_preference_lora_v1.sh
 ```
 
-The recipe trains on 5,760 Pick-a-Pic v1 prompts and validates on 256 fixed prompts with a
-fixed seed. It differs from the OCR recipe in two ways that both matter for convergence:
+The recipe samples from a dataset capped at 5,760 Pick-a-Pic v1 prompts; the default 60-step
+run consumes 1,440 prompt groups (24 per step). Validation uses 256 fixed prompts with a fixed
+seed. The recipe differs from the OCR recipe in two ways that both matter for convergence:
 
 - `pipeline.guidance_scale=1.0` (CFG-free, as in DiffusionNFT). With text CFG active the
   training forward regresses the guided velocity `v_u + s * (v_c - v_u)` onto the policy's own
@@ -169,8 +170,10 @@ steps, 512px):
 | 60   | 1.829             | 0.287   | 0.837          | 0.705     | 98%                       |
 
 At step 60 the CFG-free policy also beats the CFG-4 base model on the same prompts and seeds
-(1.829 vs 1.811, paired 95% CI of the difference [+0.003, +0.033]). A training step takes
-about 8 minutes and a validation pass (256 prompts, 40 steps) about 4 minutes. The same recipe
+(1.829 vs 1.811, paired 95% CI of the difference [+0.003, +0.033]). This run took about 8
+minutes per training step and 4 minutes per validation pass (256 prompts, 40 steps); it predates
+the launcher's `OMP_NUM_THREADS=8` cap, which brings these to about 402 s and 194 s (the
+performance table row). The same recipe
 on the deprecated V0 trainer gives a bit-identical step-0 validation and reaches 1.844 at step
 60; that gap comes from single runs and has not been separated from run-to-run variance.
 

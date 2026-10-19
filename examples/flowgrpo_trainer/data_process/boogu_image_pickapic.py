@@ -108,7 +108,7 @@ def main() -> None:
         "--train-size",
         type=int,
         default=5760,
-        help="Unique training prompts; 5760 is exactly 120 batches of 48. Use 0 for all remaining prompts.",
+        help="Unique training prompts; 5760 is exactly 240 batches of 24. Use 0 for all remaining prompts.",
     )
     parser.add_argument("--validation-size", type=int, default=256)
     parser.add_argument("--num-proc", type=int, default=16)
