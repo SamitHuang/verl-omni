@@ -18,7 +18,6 @@ import logging
 import os
 import subprocess
 import tempfile
-import threading
 import wave
 from collections.abc import Sequence
 from pathlib import Path
@@ -32,10 +31,7 @@ from verl_omni.utils.reward_score.reward_utils import normalize_video_tensor
 
 logger = logging.getLogger(__name__)
 
-# Held while ffmpeg runs. A process forked meanwhile (e.g. a DataLoader worker)
-# inherits ffmpeg's pipes and keeps them open, so the export never finishes; take
-# this lock around any fork that can overlap a background export.
-media_export_lock = threading.Lock()
+_FFMPEG_TIMEOUT_S = 600
 
 
 def batch_items(values: Any, batch_size: int, name: str) -> list[Any]:
@@ -125,10 +121,11 @@ def _export_video(
 ) -> None:
     """Encode RGB frames and optional audio in one ffmpeg invocation.
 
-    Passing the contiguous RGB buffer through ``subprocess.run(input=...)`` uses
-    ``communicate`` to finish partial pipe writes. This avoids imageio-ffmpeg's
-    direct ``stdin.write`` path, which can silently truncate a raw-video frame
-    without materializing another full-video ``bytes`` copy.
+    The RGB frames are spooled to a transient file, like the audio track, instead
+    of being written to ffmpeg's stdin. Exports run on a background thread, and a
+    process forked meanwhile (e.g. a DataLoader worker) would inherit any pipe to
+    ffmpeg and keep it open, so the export would never finish. A file also avoids
+    imageio-ffmpeg's ``stdin.write`` path, which can silently truncate a frame.
     """
     if ffmpeg_exe is None:
         from imageio_ffmpeg import get_ffmpeg_exe
@@ -144,6 +141,7 @@ def _export_video(
 
     frames, width, height = _video_tensor_to_rgb24(output)
     output_path = Path(output_path)
+    frames_path = output_path.with_suffix(".rgb")
     audio_path = None
     command = [
         ffmpeg_exe,
@@ -161,9 +159,10 @@ def _export_video(
         "-r",
         str(fps),
         "-i",
-        "-",
+        str(frames_path),
     ]
     try:
+        frames.tofile(frames_path)
         if audio is None:
             command.append("-an")
         else:
@@ -192,12 +191,14 @@ def _export_video(
             command.extend(["-c:a", "aac", "-t", str(frames.shape[0] / fps)])
         command.append(str(output_path))
         try:
-            with media_export_lock:
-                subprocess.run(command, input=memoryview(frames).cast("B"), check=True)
+            # No pipes, and close_fds=False lets CPython use posix_spawn, which creates no
+            # exec-status pipe either, so a concurrent fork inherits nothing from this call.
+            subprocess.run(command, stdin=subprocess.DEVNULL, close_fds=False, check=True, timeout=_FFMPEG_TIMEOUT_S)
         except Exception:
             output_path.unlink(missing_ok=True)
             raise
     finally:
+        frames_path.unlink(missing_ok=True)
         if audio_path is not None:
             audio_path.unlink(missing_ok=True)
 
