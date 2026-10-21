@@ -106,7 +106,7 @@ from verl_omni.trainer.diffusion.v1.tq_utils import (
 )
 from verl_omni.utils.config import resolve_lora_config
 from verl_omni.utils.net_utils import worker_group_port_ranges
-from verl_omni.utils.tracking import batch_items, validate_audio_batch
+from verl_omni.utils.tracking import batch_items, media_export_lock, validate_audio_batch
 from verl_omni.workers.config.reward import (
     reward_is_enabled,
     reward_pool_is_separate,
@@ -1166,13 +1166,19 @@ class PolicyGradientDiffusionTrainerV1(ABC):
             return self.reward_loop_manager.reward_loop_workers
         return None
 
+    @staticmethod
+    def _iter_dataloader(dataloader):
+        """Start dataloader workers without forking during a background video export."""
+        with media_export_lock:
+            return iter(dataloader)
+
     def _fetch_one_gen_batch(self):
         if self.train_dataloader_it is None:
-            self.train_dataloader_it = iter(self.train_dataloader)
+            self.train_dataloader_it = self._iter_dataloader(self.train_dataloader)
         try:
             batch_dict = next(self.train_dataloader_it)
         except StopIteration:
-            self.train_dataloader_it = iter(self.train_dataloader)
+            self.train_dataloader_it = self._iter_dataloader(self.train_dataloader)
             batch_dict = next(self.train_dataloader_it)
 
         batch_dict["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch_dict["raw_prompt"]))], dtype=object)
@@ -1523,7 +1529,7 @@ class PolicyGradientDiffusionTrainerV1(ABC):
         data_sources: list = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
-        for batch_dict in self.val_dataloader:
+        for batch_dict in self._iter_dataloader(self.val_dataloader):
             batch_dict["uid"] = np.array(
                 [str(uuid.uuid4()) for _ in range(len(batch_dict["raw_prompt"]))], dtype=object
             )

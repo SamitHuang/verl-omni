@@ -149,6 +149,20 @@ def test_v1_background_export_owns_cpu_media_snapshot(tmp_path):
     assert torch.all(dumped_audios[0] == 0.25)
 
 
+def test_v1_dataloader_workers_start_under_media_export_lock():
+    lock_held = []
+
+    class _Loader:
+        def __iter__(self):
+            lock_held.append(trainer_base_module.media_export_lock.locked())
+            return iter(())
+
+    PolicyGradientDiffusionTrainerV1._iter_dataloader(_Loader())
+
+    assert lock_held == [True]
+    assert not trainer_base_module.media_export_lock.locked()
+
+
 @pytest.mark.parametrize("transport", ["top", "tool"])
 @pytest.mark.parametrize("kinds", [["image", "video"], [None, "video"], [None, None]])
 def test_v0_rollout_validates_all_declared_kinds(transport, kinds):

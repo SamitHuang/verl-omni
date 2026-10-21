@@ -18,6 +18,7 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
 import wave
 from collections.abc import Sequence
 from pathlib import Path
@@ -30,6 +31,11 @@ from verl_omni.pipelines.rollout_media import MediaArtifact, MediaSpec, resolve_
 from verl_omni.utils.reward_score.reward_utils import normalize_video_tensor
 
 logger = logging.getLogger(__name__)
+
+# Held while ffmpeg runs. A process forked meanwhile (e.g. a DataLoader worker)
+# inherits ffmpeg's pipes and keeps them open, so the export never finishes; take
+# this lock around any fork that can overlap a background export.
+media_export_lock = threading.Lock()
 
 
 def batch_items(values: Any, batch_size: int, name: str) -> list[Any]:
@@ -186,7 +192,8 @@ def _export_video(
             command.extend(["-c:a", "aac", "-t", str(frames.shape[0] / fps)])
         command.append(str(output_path))
         try:
-            subprocess.run(command, input=memoryview(frames).cast("B"), check=True)
+            with media_export_lock:
+                subprocess.run(command, input=memoryview(frames).cast("B"), check=True)
         except Exception:
             output_path.unlink(missing_ok=True)
             raise
