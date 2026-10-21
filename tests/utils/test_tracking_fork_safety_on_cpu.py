@@ -15,6 +15,7 @@
 """CPU regression tests: a fork during a background video export must not hang the export."""
 
 import multiprocessing
+import os
 import subprocess
 import threading
 import time
@@ -74,6 +75,25 @@ def test_fork_during_export_does_not_hang_it(tmp_path):
         exporter.join(timeout=10)
 
 
+@pytest.mark.skipif(not getattr(subprocess, "_USE_POSIX_SPAWN", False), reason="CPython has no posix_spawn path here")
+def test_export_spawns_ffmpeg_without_an_exec_status_pipe(monkeypatch, tmp_path):
+    # The fork/exec fallback opens an exec-status pipe that a concurrent fork can inherit,
+    # which blocks Popen itself; posix_spawn has no such pipe.
+    fake_ffmpeg = tmp_path / "fake_ffmpeg"
+    fake_ffmpeg.write_text("#!/bin/sh\n")
+    fake_ffmpeg.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+
+    def fail_fork_exec(*args, **kwargs):
+        raise AssertionError("ffmpeg was started through fork/exec")
+
+    monkeypatch.setattr(subprocess, "_fork_exec", fail_fork_exec)
+
+    for ffmpeg_exe in (str(fake_ffmpeg), "fake_ffmpeg"):
+        tracking._export_video(_frames(), str(tmp_path / "sample.mp4"), fps=24, ffmpeg_exe=ffmpeg_exe)
+
+
 def test_export_gives_ffmpeg_no_pipe_and_removes_spooled_frames(monkeypatch, tmp_path):
     calls = []
 
@@ -83,6 +103,8 @@ def test_export_gives_ffmpeg_no_pipe_and_removes_spooled_frames(monkeypatch, tmp
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(tracking.subprocess, "run", fake_run)
+    unrelated = tmp_path / "sample.rgb"
+    unrelated.write_bytes(b"keep")
 
     tracking._export_video(_frames(), str(tmp_path / "sample.mp4"), fps=24, ffmpeg_exe="/usr/bin/ffmpeg")
 
@@ -92,4 +114,6 @@ def test_export_gives_ffmpeg_no_pipe_and_removes_spooled_frames(monkeypatch, tmp
     assert kwargs["close_fds"] is False
     assert kwargs["timeout"] > 0
     assert size == 4 * 128 * 128 * 3
+    assert frames_path != unrelated
     assert not frames_path.exists()
+    assert unrelated.read_bytes() == b"keep"

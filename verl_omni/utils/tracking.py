@@ -16,6 +16,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import wave
@@ -70,6 +71,12 @@ def validate_audio_batch(audios: Any, rates: Any, count: int, *, context: str) -
     for audio, rate in zip(audios, rates, strict=True):
         validate_audio(audio, rate, context=context)
     return audios, rates
+
+
+def _temp_path_beside(path: Path, suffix: str) -> Path:
+    fd, temp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.stem}.", suffix=suffix)
+    os.close(fd)
+    return Path(temp_path)
 
 
 def _write_wav(audio: Any, sample_rate: Any, path: Path) -> None:
@@ -131,6 +138,8 @@ def _export_video(
         from imageio_ffmpeg import get_ffmpeg_exe
 
         ffmpeg_exe = get_ffmpeg_exe()
+    # CPython only uses posix_spawn for an executable given by path.
+    ffmpeg_exe = os.path.abspath(shutil.which(ffmpeg_exe) or ffmpeg_exe)
 
     if isinstance(output, MediaArtifact) and output.spec.fps is not None:
         fps = output.spec.fps
@@ -141,7 +150,7 @@ def _export_video(
 
     frames, width, height = _video_tensor_to_rgb24(output)
     output_path = Path(output_path)
-    frames_path = output_path.with_suffix(".rgb")
+    frames_path = _temp_path_beside(output_path, ".rgb")
     audio_path = None
     command = [
         ffmpeg_exe,
@@ -168,7 +177,7 @@ def _export_video(
         else:
             if audio_sample_rate is None:
                 raise ValueError("audio_sample_rate is required when logging a video with audio.")
-            audio_path = output_path.with_suffix(".wav")
+            audio_path = _temp_path_beside(output_path, ".wav")
             _write_wav(audio, audio_sample_rate, audio_path)
             command.extend(["-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0"])
 
