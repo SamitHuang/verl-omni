@@ -1,0 +1,76 @@
+id: t0_qwen3omni_thinker_zero_diff
+description: >
+  Make actor (HF + FSDP2) and rollout (vLLM-Omni thinker-only) log-probs
+  bitwise equal for the Qwen3-Omni thinker on the scope below.
+scope:
+  model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+  checkpoint: /home/public/yx/rsi_ckpts/qwen3omni_thinker_4l   # rsi.tools.make_truncated_ckpt --num-layers 4
+  truncate_layers: 4
+  rollout_tp: 1
+  lora: false
+  modalities: [text]
+  dtype: bfloat16
+  sampling: {temperature: 1.0, top_k: -1, top_p: 1.0}
+start:
+  # Each repo is checked out as a git worktree per iteration and put first on
+  # PYTHONPATH, overriding the packages installed in `python`.
+  python: /home/public/yx/verl-omni/.venv/bin/python
+  repos:
+    verl-omni: {path: /home/public/yx/verl-omni, sha: c53b387c}
+    verl: {path: /home/public/yx/verl, sha: fefb080262e1c015a0ea05f958822a6a512dc795}
+    vllm-omni: {path: /home/public/yx/vllm-omni-pin-12e9280, sha: 12e928001}
+  env_notes: >
+    transformers 5.13.0, vLLM 0.30.0, 4x H200 (torch compute capability 9.0).
+    verl-omni#637 measured on vLLM 0.28 + transformers 5.14.1 + H20.
+editable:
+  - verl-omni/verl_omni/**
+  - verl/verl/**
+  - vllm-omni/vllm_omni/**
+protected:
+  # Never editable, even if matched above.
+  - verl-omni/rsi/**
+  - verl-omni/tests/**
+  - verl/tests/**
+  - vllm-omni/tests/**
+grad_gate:
+  # g3: candidate gradients vs an fp32 reference on fixed rows, with stock bf16 as the yardstick.
+  fixture: /home/public/yx/rsi_work/fixtures/t0/batch_step1.pt
+bench:
+  # Measurement only (`--gate bench`); full depth, from the candidate's g2 capture.
+  rollout_checkpoint: /home/public/yx/.cache/hub/models--Qwen--Qwen3-Omni-30B-A3B-Instruct/snapshots/26291f793822fb6be9555850f06dfe95f2d7e695
+  actor_checkpoint: /home/public/yx/.cache/hub/models--Qwen--Qwen3-Omni-30B-A3B-Instruct/snapshots/26291f793822fb6be9555850f06dfe95f2d7e695
+  actor: {gpus: 2}
+  loop:
+    # `--gate bench_loop`: 30B full-parameter on 4 GPUs needs the optimizer off the GPU during rollout.
+    gpus: 4
+    overrides:
+      - actor_rollout_ref.actor.fsdp_config.optimizer_offload=true
+      - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+      # Stock's update_actor peaked above 136 GB at 16k tokens per micro-batch.
+      - actor_rollout_ref.actor.ppo_max_token_len_per_gpu=8192
+candidate_env_rules:
+  # Keys a candidate may set in CANDIDATE_ENV (full-match regexes); deny wins.
+  allow: ["VLLM_[A-Z0-9_]+", "VERL_[A-Z0-9_]+", "TORCH_[A-Z0-9_]+", "NCCL_[A-Z0-9_]+", "CUBLAS_WORKSPACE_CONFIG", "PYTORCH_CUDA_ALLOC_CONF"]
+  deny: ["VERL_USE_EXTERNAL_MODULES", "VLLM_ENABLE_V1_MULTIPROCESSING", "VLLM_LOGGING_LEVEL", "RSI_.*"]
+objective:
+  primary: {metric: mismatch_total, goal: "== 0"}
+# Run order: g1 replays the batch and engine args that g2 captured.
+gates: [g0_static, g3_grad, g2_loop_zero_diff, g1_offline_zero_diff]
+budget: {gpu_hours: 40, iterations: 60, wall_clock_h: 72, iteration_timeout_min: 45}
+agent:
+  gpus: 2                                            # leased to the agent for its own experiments
+  workspace_root: /home/public/yx/rsi_work/agent_ws  # owned by the agent user, see DESIGN.md section 8
+  readable: [/home/public/yx/data/gsm8k]             # checked as the agent user before the first turn
+environment: |
+  The gates run verl's trainer (`verl_omni.trainer.main_omni`, FSDP2 actor, GSPO, 2 steps) with a
+  vLLM-Omni thinker rollout (TP=1, enforce_eager, prefix caching off) on the checkpoint in Scope,
+  gsm8k data at /home/public/yx/data/gsm8k. Raw rollout log-probs are compared with the actor's
+  recomputed old log-probs on every response token, with `!=`.
+audit:
+  # (name, regex) pairs flagged in the agent log in addition to the defaults in rsi/orchestrator/audit.py.
+  flag:
+    - [human_solution, "verl-omni#637|issues/637|verl#80(25|26)|vllm-omni#8186"]
+    - [hidden_path, "rsi_work/(dev|scratch|runs)|/yx/verl-omni/rsi\\b|agent-transcripts|/root/"]
+context:
+  allow_web: false
+  kb: none

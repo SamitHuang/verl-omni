@@ -1,0 +1,64 @@
+id: t1_qwen3omni_thinker_lora_zero_diff
+description: >
+  Transfer task for T0. Starting from a full-parameter 0-diff solution, make actor
+  (HF + FSDP2 + PEFT LoRA) and rollout (vLLM-Omni thinker-only, LoRA merged into the
+  synced weights) log-probs bitwise equal for the Qwen3-Omni thinker, with LoRA
+  gradients that match an fp32 reference.
+scope:
+  model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+  checkpoint: /home/public/yx/rsi_ckpts/qwen3omni_thinker_4l   # rsi.tools.make_truncated_ckpt --num-layers 4
+  truncate_layers: 4
+  rollout_tp: 1
+  lora: {rank: 32, alpha: 64, dtype: float32, merge: true, target_modules: [q_proj, k_proj, v_proj, o_proj]}
+  modalities: [text]
+  dtype: bfloat16
+  sampling: {temperature: 1.0, top_k: -1, top_p: 1.0}
+start:
+  python: /home/public/yx/verl-omni/.venv/bin/python
+  repos:
+    verl-omni: {path: /home/public/yx/verl-omni, sha: c53b387c}
+    verl: {path: /home/public/yx/verl, sha: fefb080262e1c015a0ea05f958822a6a512dc795}
+    vllm-omni: {path: /home/public/yx/vllm-omni-pin-12e9280, sha: 12e928001}
+  # Applied on top of the pins for the baseline and as the first parent: the
+  # hand-made T0 solution (full-parameter 0-diff, opt-in via VLLM_BATCH_INVARIANT=1).
+  patches: /home/public/yx/rsi_work/reference/t0_manual
+  env_notes: >
+    transformers 5.13.0, vLLM 0.30.0, 4x H200 (torch compute capability 9.0).
+editable:
+  - verl-omni/verl_omni/**
+  - verl/verl/**
+  - vllm-omni/vllm_omni/**
+protected:
+  - verl-omni/rsi/**
+  - verl-omni/tests/**
+  - verl/tests/**
+  - vllm-omni/tests/**
+grad_gate:
+  # Same fixture as T0; LoRA expectations are projected from the full-parameter reference
+  # (B == 0 at init, so dL/dB = scaling * dL/dW @ A^T and dL/dA = 0).
+  fixture: /home/public/yx/rsi_work/fixtures/t0/batch_step1.pt
+candidate_env_rules:
+  allow: ["VLLM_[A-Z0-9_]+", "VERL_[A-Z0-9_]+", "TORCH_[A-Z0-9_]+", "NCCL_[A-Z0-9_]+", "CUBLAS_WORKSPACE_CONFIG", "PYTORCH_CUDA_ALLOC_CONF"]
+  deny: ["VERL_USE_EXTERNAL_MODULES", "VLLM_ENABLE_V1_MULTIPROCESSING", "VLLM_LOGGING_LEVEL", "RSI_.*"]
+objective:
+  primary: {metric: mismatch_total, goal: "== 0"}
+gates: [g0_static, g3_grad, g2_loop_zero_diff, g1_offline_zero_diff]
+budget: {gpu_hours: 20, iterations: 30, wall_clock_h: 36, iteration_timeout_min: 45}
+agent:
+  gpus: 2
+  workspace_root: /home/public/yx/rsi_work/agent_ws
+  readable: [/home/public/yx/data/gsm8k]   # checked as the agent user before the first turn
+environment: |
+  The gates run verl's trainer (`verl_omni.trainer.main_omni`, FSDP2 actor, GSPO, 2 steps) with a
+  vLLM-Omni thinker rollout (TP=1, enforce_eager, prefix caching off) on the checkpoint in Scope,
+  gsm8k data at /home/public/yx/data/gsm8k, and the LoRA settings in Scope (actor wraps the thinker
+  with PEFT; rollout receives the merged weights each step). Raw rollout log-probs are compared with
+  the actor's recomputed old log-probs on every response token, with `!=`. The starting code already
+  achieves 0-diff for full-parameter training with VLLM_BATCH_INVARIANT=1 (see CANDIDATE_ENV).
+audit:
+  flag:
+    - [human_solution, "verl-omni#637|issues/637|verl#80(25|26)|vllm-omni#8186"]
+    - [hidden_path, "rsi_work/(dev|scratch|runs|reference)|/yx/verl-omni/rsi\\b|agent-transcripts|/root/"]
+context:
+  allow_web: false
+  kb: none   # overridden per run with --kb / --toolset

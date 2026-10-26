@@ -1,0 +1,90 @@
+id: t1_qwen3omni_thinker_zero_diff_throughput
+description: >
+  The workspace makes actor (HF + FSDP2) and rollout (vLLM-Omni thinker-only) log-probs bitwise
+  equal for the Qwen3-Omni thinker with full-parameter training, but not yet with the LoRA scope
+  below (actor wraps the thinker with PEFT, rollout serves the merged weights): the gates show
+  where it differs. It is also slower than the unpatched code. Make actor and rollout bitwise equal
+  under LoRA, with gradients that match an fp32 reference, and make it fast: rollout decode and
+  actor forward/backward throughput, measured on the full-depth checkpoint.
+scope:
+  model: Qwen/Qwen3-Omni-30B-A3B-Instruct
+  checkpoint: /home/public/yx/rsi_ckpts/qwen3omni_thinker_4l   # correctness gates; throughput uses bench.*_checkpoint
+  truncate_layers: 4
+  rollout_tp: 1
+  # LoRA: stock full-parameter training at full depth runs out of memory on 4 GPUs in update_actor
+  # (16k and 8k tokens per micro-batch, optimizer offloaded).
+  lora: {rank: 32, alpha: 64, dtype: float32, merge: true, target_modules: [q_proj, k_proj, v_proj, o_proj]}
+  modalities: [text]
+  dtype: bfloat16
+  sampling: {temperature: 1.0, top_k: -1, top_p: 1.0}
+start:
+  python: /home/public/yx/verl-omni/.venv/bin/python
+  repos:
+    verl-omni: {path: /home/public/yx/verl-omni, sha: c53b387c}
+    verl: {path: /home/public/yx/verl, sha: fefb080262e1c015a0ea05f958822a6a512dc795}
+    vllm-omni: {path: /home/public/yx/vllm-omni-pin-12e9280, sha: 12e928001}
+  # T0 control-run solution (no KB, solved and confirmed at iteration 11). Under LoRA: g3 passes,
+  # g2 8191/16384 (step 2, after the first LoRA update), g1 first divergence L0.q_norm.
+  patches: /home/public/yx/rsi_work/runs/t0_blind_opus55_r2/iter_011/patches
+  env_notes: >
+    transformers 5.13.0, vLLM 0.30.0, 4x H200 (torch compute capability 9.0).
+editable:
+  - verl-omni/verl_omni/**
+  - verl/verl/**
+  - vllm-omni/vllm_omni/**
+protected:
+  - verl-omni/rsi/**
+  - verl-omni/tests/**
+  - verl/tests/**
+  - vllm-omni/tests/**
+grad_gate:
+  # LoRA expectations are projected from the full-parameter reference (as in T0-LoRA).
+  fixture: /home/public/yx/rsi_work/fixtures/t0/batch_step1.pt
+bench:
+  rollout_checkpoint: /home/public/yx/.cache/hub/models--Qwen--Qwen3-Omni-30B-A3B-Instruct/snapshots/26291f793822fb6be9555850f06dfe95f2d7e695
+  actor_checkpoint: /home/public/yx/.cache/hub/models--Qwen--Qwen3-Omni-30B-A3B-Instruct/snapshots/26291f793822fb6be9555850f06dfe95f2d7e695
+  actor: {gpus: 2}
+  loop:
+    # 30B on 4 GPUs: optimizer off the GPU during rollout, 8k tokens per update micro-batch.
+    gpus: 4
+    overrides:
+      - actor_rollout_ref.actor.fsdp_config.optimizer_offload=true
+      - actor_rollout_ref.rollout.gpu_memory_utilization=0.6
+      - actor_rollout_ref.actor.ppo_max_token_len_per_gpu=8192
+candidate_env_rules:
+  allow: ["VLLM_[A-Z0-9_]+", "VERL_[A-Z0-9_]+", "TORCH_[A-Z0-9_]+", "NCCL_[A-Z0-9_]+", "CUBLAS_WORKSPACE_CONFIG", "PYTORCH_CUDA_ALLOC_CONF"]
+  deny: ["VERL_USE_EXTERNAL_MODULES", "VLLM_ENABLE_V1_MULTIPROCESSING", "VLLM_LOGGING_LEVEL", "RSI_.*"]
+objective:
+  primary:
+    type: maximize
+    # Worst ratio to stock wins. CUDA-graph decode is not scored: graphs do not start for the
+    # Qwen3-Omni thinker on these pins, stock included.
+    metrics: [rollout_eager_tok_s_bs128, actor_logprob_tok_s, actor_fwd_bwd_tok_s]
+    min_gain: 0.05
+    target: 0.9
+gates: [g0_static, g3_grad, g2_loop_zero_diff, g1_offline_zero_diff]
+budget: {gpu_hours: 60, iterations: 30, wall_clock_h: 96, iteration_timeout_min: 60}
+agent:
+  gpus: 2
+  workspace_root: /home/public/yx/rsi_work/agent_ws
+  readable:
+    - /home/public/yx/data/gsm8k
+    - /home/public/yx/.cache/hub/models--Qwen--Qwen3-Omni-30B-A3B-Instruct/snapshots/26291f793822fb6be9555850f06dfe95f2d7e695
+environment: |
+  Correctness gates: verl's trainer (`verl_omni.trainer.main_omni`, FSDP2 actor, GSPO, 2 steps) with a
+  vLLM-Omni thinker rollout (TP=1, enforce_eager, prefix caching off) on the 4-layer checkpoint in
+  Scope, gsm8k data at /home/public/yx/data/gsm8k, and the LoRA settings in Scope (actor wraps the
+  thinker with PEFT; rollout receives the merged weights each step). Raw rollout log-probs are
+  compared with the actor's recomputed old log-probs on every response token, with `!=`.
+  Throughput (full 48-layer checkpoint, see bench.rollout_checkpoint): vLLM eager decode of 512 tokens
+  per sequence at batch 128, from the engine arguments g2 captured (CUDA graphs are tried but do not
+  start on these pins); actor `compute_log_prob` and forward+backward over 32k tokens per GPU under
+  torchrun FSDP2 on 2 GPUs. An improvement is then confirmed by 5 steps of the real training loop at
+  full depth on 4 GPUs, which must stay bitwise.
+audit:
+  flag:
+    - [human_solution, "verl-omni#637|issues/637|verl#80(25|26)|vllm-omni#8186"]
+    - [hidden_path, "rsi_work/(dev|scratch|runs|reference|bench)|/yx/verl-omni/rsi\\b|agent-transcripts|/root/"]
+context:
+  allow_web: false
+  kb: none

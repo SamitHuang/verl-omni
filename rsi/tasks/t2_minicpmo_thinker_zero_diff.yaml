@@ -1,0 +1,92 @@
+id: t2_minicpmo_thinker_zero_diff
+description: >
+  Make actor (HF remote code + FSDP2) and rollout (vLLM-Omni MiniCPM-o 4.5, AR output) log-probs
+  bitwise equal for the MiniCPM-o 4.5 thinker (LLM) on the scope below, with actor gradients that
+  match an fp32 reference.
+scope:
+  family: minicpm_o
+  model: openbmb/MiniCPM-o-4_5
+  checkpoint: /home/public/yx/rsi_ckpts/minicpmo45_4l   # rsi.tools.make_truncated_ckpt --family minicpm_o --num-layers 4
+  truncate_layers: 4
+  rollout_tp: 1
+  # LoRA as in examples/gspo_trainer/minicpm/run_minicpmo_4_5_thinker_gspo_lora_avqa_v1.sh. Full
+  # fine-tuning is unsupported at the pin: the adapter leaves apm/vpm/resampler unsharded on the
+  # assumption that they are frozen, and nothing freezes them without LoRA.
+  lora: {rank: 32, alpha: 64, dtype: float32, merge: true, target_modules: [q_proj, k_proj, v_proj, o_proj]}
+  modalities: [text]
+  dtype: bfloat16
+  sampling: {temperature: 1.0, top_k: -1, top_p: 1.0}
+start:
+  # The main venv plus transformers 5.14.1 (MiniCPM-o's remote processor needs it; the recipe was
+  # validated on it). See DESIGN.md "Environments".
+  python: /home/public/yx/rsi_work/venvs/t2_tf5141/bin/python
+  repos:
+    verl-omni: {path: /home/public/yx/verl-omni, sha: c53b387c}
+    verl: {path: /home/public/yx/verl, sha: fefb080262e1c015a0ea05f958822a6a512dc795}
+    vllm-omni: {path: /home/public/yx/vllm-omni-pin-12e9280, sha: 12e928001}
+  env_notes: >
+    transformers 5.14.1, vLLM 0.30.0, torch 2.13.0+cu129, 4x H200 (torch compute capability 9.0).
+editable:
+  - verl-omni/verl_omni/**
+  - verl/verl/**
+  - vllm-omni/vllm_omni/**
+protected:
+  - verl-omni/rsi/**
+  - verl-omni/tests/**
+  - verl/tests/**
+  - vllm-omni/tests/**
+bench:
+  # Measurement only (`--gate bench`); full depth, from the candidate's g2 capture.
+  rollout_checkpoint: /home/public/models/MiniCPM-o-4_5
+  actor_checkpoint: /home/public/models/MiniCPM-o-4_5
+  actor: {gpus: 2}
+  loop: {gpus: 2}
+  # Convergence (`--gate bench_loop --bench-profile converge[_bypass]`): real gsm8k reward,
+  # GSPO with the recipe's clip ratios, 2 updates per step, validation on 256 test rows.
+  converge: &converge
+    steps: 150
+    timeout_s: 21600
+    overrides: &converge_overrides
+      - actor_rollout_ref.actor.ppo_mini_batch_size=16
+      - actor_rollout_ref.actor.clip_ratio_low=3e-4
+      - actor_rollout_ref.actor.clip_ratio_high=4e-4
+      - actor_rollout_ref.actor.clip_ratio_c=10.0
+      - reward.custom_reward_function.path=null
+      - data.val_max_samples=256
+      - trainer.val_before_train=true
+      - trainer.test_freq=25
+  # Same, with old log-probs taken from the rollout instead of recomputed by the actor.
+  converge_bypass:
+    <<: *converge
+    overrides:
+      - *converge_overrides
+      - algorithm.rollout_correction.bypass_mode=true
+candidate_env_rules:
+  allow: ["VLLM_[A-Z0-9_]+", "VERL_[A-Z0-9_]+", "TORCH_[A-Z0-9_]+", "NCCL_[A-Z0-9_]+", "CUBLAS_WORKSPACE_CONFIG", "PYTORCH_CUDA_ALLOC_CONF"]
+  deny: ["VERL_USE_EXTERNAL_MODULES", "VLLM_ENABLE_V1_MULTIPROCESSING", "VLLM_LOGGING_LEVEL", "RSI_.*"]
+objective:
+  primary: {metric: mismatch_total, goal: "== 0"}
+grad_gate:
+  # g3: candidate gradients vs an fp32 reference on fixed rows, with stock bf16 as the yardstick.
+  fixture: /home/public/yx/rsi_work/fixtures/t2/batch_step1.pt   # step-1 batch of the stock loop
+# Run order: g1 replays the batch and engine args that g2 captured.
+gates: [g0_static, g3_grad, g2_loop_zero_diff, g1_offline_zero_diff]
+budget: {gpu_hours: 40, iterations: 60, wall_clock_h: 72, iteration_timeout_min: 45}
+agent:
+  gpus: 2
+  workspace_root: /home/public/yx/rsi_work/agent_ws
+  readable: [/home/public/yx/data/gsm8k]
+environment: |
+  The gates run verl's trainer (`verl_omni.trainer.main_omni`, FSDP2 actor, GSPO, 2 steps) with a
+  vLLM-Omni MiniCPM-o 4.5 rollout (pipeline `minicpmo_4_5`, AR output, TP=1, enforce_eager, prefix
+  caching off) on the checkpoint in Scope, gsm8k data at /home/public/yx/data/gsm8k (text only,
+  `MiniCPMORLHFDataset`). The actor loads MiniCPM-o's remote code through
+  `verl_omni.pipelines.minicpm`. Raw rollout log-probs are compared with the actor's recomputed old
+  log-probs on every response token, with `!=`.
+audit:
+  flag:
+    - [human_solution, "verl-omni#637|issues/637|verl#80(25|26)|vllm-omni#8186"]
+    - [hidden_path, "rsi_work/(dev|scratch|runs|reference)|/yx/verl-omni/rsi\\b|agent-transcripts|/root/"]
+context:
+  allow_web: false
+  kb: none

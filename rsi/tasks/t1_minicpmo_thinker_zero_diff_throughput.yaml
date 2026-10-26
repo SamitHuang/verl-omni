@@ -1,0 +1,76 @@
+id: t1_minicpmo_thinker_zero_diff_throughput
+description: >
+  The workspace already makes actor (HF remote code + FSDP2) and rollout (vLLM-Omni MiniCPM-o 4.5,
+  AR output) log-probs bitwise equal for the MiniCPM-o 4.5 thinker, with actor gradients that match
+  an fp32 reference, but it is slower than the unpatched code. Make it faster while it stays bitwise:
+  rollout decode and actor forward/backward throughput, measured on the full-depth checkpoint.
+scope:
+  family: minicpm_o
+  model: openbmb/MiniCPM-o-4_5
+  checkpoint: /home/public/yx/rsi_ckpts/minicpmo45_4l   # correctness gates; throughput uses bench.*_checkpoint
+  truncate_layers: 4
+  rollout_tp: 1
+  lora: {rank: 32, alpha: 64, dtype: float32, merge: true, target_modules: [q_proj, k_proj, v_proj, o_proj]}
+  modalities: [text]
+  dtype: bfloat16
+  sampling: {temperature: 1.0, top_k: -1, top_p: 1.0}
+start:
+  python: /home/public/yx/rsi_work/venvs/t2_tf5141/bin/python
+  repos:
+    verl-omni: {path: /home/public/yx/verl-omni, sha: c53b387c}
+    verl: {path: /home/public/yx/verl, sha: fefb080262e1c015a0ea05f958822a6a512dc795}
+    vllm-omni: {path: /home/public/yx/vllm-omni-pin-12e9280, sha: 12e928001}
+  # T2 KB-arm solution (solved and confirmed at iteration 6).
+  patches: /home/public/yx/rsi_work/runs/t2_kb_opus55_r2/iter_006/patches
+  env_notes: >
+    transformers 5.14.1, vLLM 0.30.0, torch 2.13.0+cu129, 4x H200 (torch compute capability 9.0).
+editable:
+  - verl-omni/verl_omni/**
+  - verl/verl/**
+  - vllm-omni/vllm_omni/**
+protected:
+  - verl-omni/rsi/**
+  - verl-omni/tests/**
+  - verl/tests/**
+  - vllm-omni/tests/**
+bench:
+  rollout_checkpoint: /home/public/models/MiniCPM-o-4_5
+  actor_checkpoint: /home/public/models/MiniCPM-o-4_5
+  actor: {gpus: 2}
+  loop: {gpus: 2}
+candidate_env_rules:
+  allow: ["VLLM_[A-Z0-9_]+", "VERL_[A-Z0-9_]+", "TORCH_[A-Z0-9_]+", "NCCL_[A-Z0-9_]+", "CUBLAS_WORKSPACE_CONFIG", "PYTORCH_CUDA_ALLOC_CONF"]
+  deny: ["VERL_USE_EXTERNAL_MODULES", "VLLM_ENABLE_V1_MULTIPROCESSING", "VLLM_LOGGING_LEVEL", "RSI_.*"]
+objective:
+  primary:
+    type: maximize
+    # Worst ratio to stock wins: decode speed cannot be bought with actor speed or vice versa.
+    metrics: [rollout_eager_tok_s_bs128, rollout_cudagraph_tok_s_bs128, actor_logprob_tok_s, actor_fwd_bwd_tok_s]
+    min_gain: 0.05
+    target: 0.9
+grad_gate:
+  fixture: /home/public/yx/rsi_work/fixtures/t2/batch_step1.pt
+gates: [g0_static, g3_grad, g2_loop_zero_diff, g1_offline_zero_diff]
+budget: {gpu_hours: 40, iterations: 30, wall_clock_h: 72, iteration_timeout_min: 60}
+agent:
+  gpus: 2
+  workspace_root: /home/public/yx/rsi_work/agent_ws
+  readable: [/home/public/yx/data/gsm8k, /home/public/models/MiniCPM-o-4_5]
+environment: |
+  Correctness gates: verl's trainer (`verl_omni.trainer.main_omni`, FSDP2 actor, GSPO, 2 steps) with a
+  vLLM-Omni MiniCPM-o 4.5 rollout (pipeline `minicpmo_4_5`, AR output, TP=1, enforce_eager, prefix
+  caching off) on the 4-layer checkpoint in Scope, gsm8k data at /home/public/yx/data/gsm8k. Raw
+  rollout log-probs are compared with the actor's recomputed old log-probs on every response token,
+  with `!=`; g1 also replays the batch with CUDA graphs.
+  Throughput (full 36-layer checkpoint at /home/public/models/MiniCPM-o-4_5): vLLM decode of 512
+  tokens per sequence at batch 128, once eager and once with CUDA graphs, from the engine arguments
+  g2 captured; actor `compute_log_prob` and forward+backward over 32k tokens per GPU under torchrun
+  FSDP2 on 2 GPUs. An improvement is then confirmed by 5 steps of the real training loop at full
+  depth, which must stay bitwise.
+audit:
+  flag:
+    - [human_solution, "verl-omni#637|issues/637|verl#80(25|26)|vllm-omni#8186"]
+    - [hidden_path, "rsi_work/(dev|scratch|runs|reference|bench)|/yx/verl-omni/rsi\\b|agent-transcripts|/root/"]
+context:
+  allow_web: false
+  kb: none
