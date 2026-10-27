@@ -296,6 +296,32 @@ def test_fsdp2_merged_stream_matches_peft_merge_without_touching_module(monkeypa
     assert not any(getattr(module, "merged", False) for module in model.modules())
 
 
+def test_fsdp2_merged_stream_owns_merged_storage(monkeypatch):
+    """A sender may flush after the stream ends; merged tensors must not alias
+    live parameters that later in-place writes could overwrite."""
+    import copy
+
+    model = _lora_model()
+    expected = copy.deepcopy(model).merge_and_unload().state_dict()
+    monkeypatch.setattr(lora_export, "fsdp_version", lambda module: 2)
+    monkeypatch.setattr(lora_export, "merged_lora_context", _fail_merged_context)
+    _patch_export_machinery(monkeypatch)
+
+    params, _ = export_lora_for_sync(
+        model, model_config=_model_config(merge=True), base_sync_done=True, is_diffusers=False
+    )
+    held = list(params)
+    live = {param.untyped_storage().data_ptr() for param in model.parameters()}
+    with torch.no_grad():
+        for param in model.parameters():
+            param.zero_()
+
+    assert {name for name, _ in held} == set(expected)
+    for name, tensor in held:
+        assert tensor.untyped_storage().data_ptr() not in live, name
+        assert torch.equal(tensor, expected[name]), name
+
+
 @pytest.mark.parametrize("lora_kwargs", [{"use_dora": True}, {"lora_bias": True}])
 def test_fsdp2_merged_stream_falls_back_for_unsupported_lora(monkeypatch, lora_kwargs):
     model = _lora_model(**lora_kwargs)
