@@ -338,6 +338,31 @@ def test_fsdp2_merged_stream_falls_back_for_unsupported_lora(monkeypatch, lora_k
     merged_context.assert_called_once()
 
 
+@pytest.mark.parametrize("target_modules", [["up", "mid"], ["up"]], ids=["lora_lora", "lora_plain"])
+def test_fsdp2_merged_stream_falls_back_for_shared_base_weight(monkeypatch, target_modules):
+    """A tied base weight receives every delta in the in-place merge, and all of
+    its keys stream that one tensor; per-tensor clones would each miss the others."""
+    from peft import LoraConfig, get_peft_model
+
+    base = torch.nn.Sequential()
+    base.add_module("up", torch.nn.Linear(16, 16, bias=False))
+    base.add_module("mid", torch.nn.Linear(16, 16, bias=False))
+    base.mid.weight = base.up.weight
+    model = get_peft_model(base, LoraConfig(r=4, lora_alpha=8, target_modules=target_modules))
+    merged_context = MagicMock(return_value=contextlib.nullcontext())
+    monkeypatch.setattr(lora_export, "fsdp_version", lambda module: 2)
+    monkeypatch.setattr(lora_export, "merged_lora_context", merged_context)
+    _patch_export_machinery(monkeypatch)
+
+    assert lora_export._vanilla_lora_linears(model) is None
+    params, _ = export_lora_for_sync(
+        model, model_config=_model_config(merge=True), base_sync_done=True, is_diffusers=False
+    )
+    dict(params)
+
+    merged_context.assert_called_once()
+
+
 def test_merged_export_rejects_named_adapter(monkeypatch):
     _patch_export_machinery(monkeypatch)
 

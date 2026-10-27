@@ -29,6 +29,7 @@ Wire contract returned to the sync orchestrator:
 
 from __future__ import annotations
 
+from collections import Counter
 from contextlib import nullcontext
 from typing import Callable, Iterator
 
@@ -76,16 +77,21 @@ def _vanilla_lora_linears(module) -> dict[str, tuple[torch.nn.Module, list[str]]
 
     ``None`` if any LoRA layer is not a plain ``lora.Linear`` that PEFT merges as
     ``weight += get_delta_weight(adapter)`` (LoRA variants such as DoRA,
-    ``lora_bias``, other layer types, or an already merged layer).
+    ``lora_bias``, other layer types, or an already merged layer), or if a LoRA
+    base weight is shared with another parameter: the in-place merge then writes
+    every delta into the one tensor that all of its keys stream.
     """
     from peft.tuners.lora import Linear as LoraLinear
     from peft.tuners.lora import LoraLayer
 
+    param_refs = Counter(id(param) for _, param in module.named_parameters(remove_duplicate=False))
     layers = {}
     for name, submodule in module.named_modules():
         if not isinstance(submodule, LoraLayer):
             continue
         if type(submodule) is not LoraLinear or submodule.merged:
+            return None
+        if param_refs[id(submodule.get_base_layer().weight)] > 1:
             return None
         adapters = [adapter for adapter in submodule.active_adapters if adapter in submodule.lora_A]
         if any(adapter in submodule.lora_variant or submodule.lora_bias[adapter] for adapter in adapters):
@@ -113,15 +119,15 @@ def _merged_lora_stream_per_tensor(
         params = normalize_peft_param_name(state_dict)
         params = convert_weight_keys(params, getattr(module, "_fsdp_wrapped_module", module))
         with torch.no_grad():
-            for name, param in params.items():
-                if isinstance(param, tuple):
-                    layer, adapters = param
-                    param = layer.get_base_layer().weight.data.clone()
+            for name, entry in params.items():
+                if isinstance(entry, tuple):
+                    layer, adapters = entry
+                    weight = layer.get_base_layer().weight.data.clone()
                     for adapter in adapters:
-                        param += layer.get_delta_weight(adapter)
-                    tensor = _cast_for_sync(param) if isinstance(param, DTensor) else param
+                        weight += layer.get_delta_weight(adapter)
+                    tensor = _cast_for_sync(weight) if isinstance(weight, DTensor) else weight
                 else:
-                    tensor = _cast_for_sync(param) if isinstance(param, DTensor) else param.detach().clone()
+                    tensor = _cast_for_sync(entry) if isinstance(entry, DTensor) else entry.detach().clone()
                 yield f"{key_prefix}{name}", tensor
     finally:
         if offload_fn is not None:
