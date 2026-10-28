@@ -339,28 +339,37 @@ def test_fsdp2_merged_stream_falls_back_for_unsupported_lora(monkeypatch, lora_k
 
 
 @pytest.mark.parametrize("target_modules", [["up", "mid"], ["up"]], ids=["lora_lora", "lora_plain"])
-def test_fsdp2_merged_stream_falls_back_for_shared_base_weight(monkeypatch, target_modules):
+def test_fsdp2_merged_stream_merges_shared_base_weight_once(monkeypatch, target_modules):
     """A tied base weight receives every delta in the in-place merge, and all of
-    its keys stream that one tensor; per-tensor clones would each miss the others."""
+    its keys stream that one tensor; a clone per key would miss the other deltas."""
+    import copy
+
     from peft import LoraConfig, get_peft_model
 
+    torch.manual_seed(0)
     base = torch.nn.Sequential()
     base.add_module("up", torch.nn.Linear(16, 16, bias=False))
     base.add_module("mid", torch.nn.Linear(16, 16, bias=False))
     base.mid.weight = base.up.weight
     model = get_peft_model(base, LoraConfig(r=4, lora_alpha=8, target_modules=target_modules))
-    merged_context = MagicMock(return_value=contextlib.nullcontext())
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if "lora_B" in name:
+                param.normal_()
+    expected = copy.deepcopy(model).merge_and_unload().state_dict()
     monkeypatch.setattr(lora_export, "fsdp_version", lambda module: 2)
-    monkeypatch.setattr(lora_export, "merged_lora_context", merged_context)
+    monkeypatch.setattr(lora_export, "merged_lora_context", _fail_merged_context)
     _patch_export_machinery(monkeypatch)
 
-    assert lora_export._vanilla_lora_linears(model) is None
     params, _ = export_lora_for_sync(
         model, model_config=_model_config(merge=True), base_sync_done=True, is_diffusers=False
     )
-    dict(params)
+    weights = dict(params)
 
-    merged_context.assert_called_once()
+    assert set(weights) == set(expected) == {"up.weight", "mid.weight"}
+    for name, tensor in expected.items():
+        assert torch.equal(weights[name], tensor), name
+    assert not torch.equal(weights["up.weight"], base.up.weight)
 
 
 def test_merged_export_rejects_named_adapter(monkeypatch):
